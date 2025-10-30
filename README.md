@@ -3,6 +3,7 @@ python -m venv fitzy_env
 
 # 가상환경 활성화
 fitzy_env\Scripts\activate
+source fitzy_env/bin/activate
 
 # 가상환경 비활성화
 deactivate
