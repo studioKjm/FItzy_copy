@@ -79,31 +79,62 @@ def main():
             # 이미지 로드
             image = Image.open(uploaded_file)
             
-            # 배경 제거 옵션
-            use_background_removal = st.checkbox("🎭 배경 제거 후 분석", value=True, help="배경을 제거하여 의류 분석 정확도 향상")
-            
-            # 배경 제거 처리
+            # 자동 배경 제거 시도
+            from src.utils.background_removal import REMBG_AVAILABLE
             processed_image = image
-            if use_background_removal:
-                with st.spinner("배경 제거 중..."):
-                    processed_image = remove_background(image)
+            bg_removed = False
+            bg_error = None
+            
+            if REMBG_AVAILABLE:
+                with st.spinner("🎭 배경 제거 중..."):
+                    try:
+                        processed_image = remove_background(image)
+                        # 배경 제거 성공 여부 확인 (RGBA 모드면 성공)
+                        if processed_image.mode == 'RGBA':
+                            bg_removed = True
+                            # 알파 채널이 실제로 있는지 확인
+                            alpha = processed_image.split()[3]
+                            if alpha.getextrema()[0] < 255:  # 일부라도 투명하면 성공
+                                bg_removed = True
+                            else:
+                                # 모두 불투명하면 배경 제거 실패로 간주
+                                bg_removed = False
+                                bg_error = "배경 제거 결과가 모두 불투명합니다."
+                        else:
+                            # RGB 모드면 배경 제거 실패로 간주
+                            processed_image = image
+                            bg_removed = False
+                            bg_error = f"배경 제거 결과가 RGB 모드입니다 (예상: RGBA)"
+                    except Exception as e:
+                        # 에러 발생 시 원본 이미지 사용
+                        processed_image = image
+                        bg_removed = False
+                        bg_error = f"배경 제거 중 오류: {str(e)}"
+            else:
+                # rembg가 없으면 원본 이미지 사용
+                st.info("ℹ️ rembg 라이브러리가 없어 원본 이미지로 분석합니다. (`pip install rembg`로 설치 가능)")
             
             # 이미지 표시 (원본/배경제거 비교)
             col_img1, col_img2 = st.columns(2)
             with col_img1:
-                st.image(image, caption="원본 이미지", use_container_width=True)
+                st.image(image, caption="원본 이미지", width='stretch')
             with col_img2:
-                if use_background_removal:
-                    # 배경 제거 결과 확인
-                    if processed_image.mode == 'RGBA':
-                        # 투명 배경 이미지 (배경 제거 성공)
-                        st.image(processed_image, caption="배경 제거 이미지 (RGBA)", use_container_width=True)
-                    else:
-                        # RGB 모드인 경우 (배경 제거 실패 또는 원본)
-                        st.warning("⚠️ 배경 제거가 제대로 작동하지 않았습니다. rembg 라이브러리를 확인하세요.")
-                        st.image(processed_image, caption="처리된 이미지", use_container_width=True)
+                if bg_removed:
+                    st.image(processed_image, caption="배경 제거 이미지 ✅", width='stretch')
+                    st.success("배경 제거 성공!")
                 else:
-                    st.image(image, caption="원본 이미지 (배경 제거 안 함)", use_container_width=True)
+                    st.image(processed_image, caption="처리된 이미지 (원본 사용)", width='stretch')
+                    if REMBG_AVAILABLE and bg_error:
+                        with st.expander("🔍 배경 제거 오류 상세"):
+                            st.error(bg_error)
+                            st.info("""
+                            **해결 방법:**
+                            1. rembg 재설치: `pip uninstall rembg && pip install rembg`
+                            2. 모델 다운로드 확인: 첫 실행 시 모델이 자동 다운로드됩니다
+                            3. 인터넷 연결 확인: 모델 다운로드에 인터넷이 필요합니다
+                            """)
+                    elif REMBG_AVAILABLE:
+                        st.warning("⚠️ 배경 제거가 완전히 수행되지 않았습니다.")
             
             # 얼굴 및 체형 분석
             st.subheader("👤 얼굴 및 체형 분석")
@@ -118,9 +149,14 @@ def main():
                     st.success("✅ 얼굴 탐지됨")
                     st.write(f"**얼굴 형태:** {face_info.get('face_shape', '알 수 없음')}")
                     st.write(f"**눈 크기:** {face_info.get('eye_size', '알 수 없음')}")
+                    if face_info.get("face_ratio"):
+                        st.caption(f"얼굴 비율: {face_info.get('face_ratio', 0):.2f}")
                 else:
                     st.warning("⚠️ 얼굴을 찾을 수 없습니다")
-                    st.info(face_info.get("message", "얼굴이 명확하게 보이도록 이미지를 업로드해주세요."))
+                    message = face_info.get("message", "얼굴이 명확하게 보이도록 이미지를 업로드해주세요.")
+                    st.info(message)
+                    if face_info.get("hint"):
+                        st.caption(f"💡 {face_info.get('hint')}")
             
             with col_body:
                 if body_info.get("detected"):
@@ -265,7 +301,7 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
         with st.expander("🧪 모델 진단 (YOLO/CLIP)", expanded=True):
             det = result.get("detected_items", {}).get("items", [])
             vis_img = draw_detections(image, det) if det else image
-            st.image(vis_img, caption="YOLO 탐지 시각화", use_container_width=True)
+            st.image(vis_img, caption="YOLO 탐지 시각화", width='stretch')
 
             # 탐지 표
             if det:
@@ -300,8 +336,9 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                 st.info(f"📊 분석된 키워드 수: {len(matches)}개")
                 
                 # 색상과 스타일 분리
-                color_matches = {k: v for k in matches.keys() if any(c in k.lower() for c in ['색', 'color', 'red', 'blue', 'white', 'black', 'yellow', 'green', 'purple', 'pink', 'orange', 'navy', 'khaki', 'beige', 'gray', 'grey'])}
-                style_matches = {k: v for k in matches.keys() if k not in color_matches}
+                color_keywords = ['색', 'color', 'red', 'blue', 'white', 'black', 'yellow', 'green', 'purple', 'pink', 'orange', 'navy', 'khaki', 'beige', 'gray', 'grey']
+                color_matches = {k: matches[k] for k in matches.keys() if any(c in k.lower() for c in color_keywords)}
+                style_matches = {k: matches[k] for k in matches.keys() if k not in color_matches}
                 
                 if color_matches:
                     st.markdown("**🎨 색상 유사도**")
@@ -322,7 +359,7 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     import altair as alt
                     df = pd.DataFrame(top, columns=["label","score"])
                     chart = alt.Chart(df).mark_bar().encode(x='label', y='score')
-                    st.altair_chart(chart, use_container_width=True)
+                    st.altair_chart(chart, use_container_width=False)
                 except Exception:
                     pass
             else:

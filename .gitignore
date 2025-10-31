@@ -147,6 +147,9 @@ data/external/
 *.json
 *.parquet
 
+# DeepFashion2 dataset (too large for Git)
+deepfashion2_data/
+
 # Jupyter notebooks (optional - uncomment if you don't want to track notebooks)
 # *.ipynb
 
