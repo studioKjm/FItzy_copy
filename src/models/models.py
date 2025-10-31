@@ -295,7 +295,18 @@ class FashionRecommender:
         
         # 2. CLIP으로 스타일 및 색상 분석
         style_descriptions = ["캐주얼", "포멀", "트렌디", "스포츠", "빈티지", "모던"]
-        color_descriptions = ["빨간색", "파란색", "검은색", "흰색", "회색", "갈색", "베이지"]
+        # 색상 키워드 확장 (한국어 + 영어)
+        color_descriptions = [
+            "빨간색", "파란색", "검은색", "흰색", "회색", "갈색", "베이지",
+            "노란색", "옐로우", "yellow",  # 추가
+            "보라색", "퍼플", "purple",
+            "오렌지", "주황색", "orange",
+            "초록색", "그린", "green",
+            "분홍색", "핑크", "pink",
+            "네이비", "navy",
+            "카키", "khaki",
+            "white", "black", "red", "blue"  # 영어 기본 색상
+        ]
         all_descriptions = style_descriptions + color_descriptions
         style_analysis = self.analyzer.analyze_style(image, all_descriptions)
         

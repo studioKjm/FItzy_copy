@@ -38,6 +38,58 @@ class RecommendationEngine:
                 mbti_style, seasonal_info, weather_info, temp_guidance
             )
         }
+
+    def recommend_products(self, style: str, gender: str):
+        """스타일/성별 기반 구체 제품 추천 (간단 카탈로그)"""
+        gender = gender or "공용"
+        catalog = {
+            "캐주얼": {
+                "남성": ["유니클로 U 크루넥 티셔츠", "리바이스 511 슬림진", "컨버스 척테일러"],
+                "여성": ["자라 크롭 티셔츠", "H&M 하이웨스트 진", "아디다스 스탠스미스"],
+                "공용": ["무신사 스탠다드 스웻셔츠", "뉴발란스 530", "나이키 볼캡"]
+            },
+            "포멀": {
+                "남성": ["지오지아 슬림핏 수트", "럭키슈에뜨 화이트 셔츠", "닥터마틴 1461"],
+                "여성": ["앤아더스토리즈 테일러드 블레이저", "COS 와이드 슬랙스", "찰스앤키스 펌프스"],
+                "공용": ["유니클로 린넨 블렌드 자켓", "COS 레더 로퍼"]
+            },
+            "트렌디": {
+                "남성": ["아크테릭스 캡", "나이키 테크플리스", "살로몬 XT-6"],
+                "여성": ["아더에러 카디건", "자크뮈스 미니백", "온러닝 클라우드"],
+                "공용": ["노스페이스 눕시", "뉴발란스 9060"]
+            }
+        }
+        pool = catalog.get(style, catalog["캐주얼"]).get(gender, catalog["캐주얼"]["공용"])
+        return pool[:3]
+
+    def evaluate_current_outfit(self, detected_items, style_analysis, weather: str, season: str):
+        """현재 코디 평가 점수 및 피드백 생성"""
+        score = 50
+        feedback = []
+        # 아이템 다양성
+        classes = {item.get("class") for item in (detected_items or [])}
+        if classes:
+            score += min(len(classes) * 5, 15)
+            feedback.append("아이템 구성이 일정 수준 확보되었습니다.")
+        else:
+            feedback.append("아이템 탐지 결과가 부족합니다. 더 명확한 사진을 업로드해 주세요.")
+        # 스타일 적합도
+        matches = style_analysis.get("text_matches", {}) if style_analysis else {}
+        top_sim = max(matches.values()) if matches else 0.0
+        score += int(top_sim * 20)
+        if top_sim > 0.4:
+            feedback.append("사진과 스타일 키워드의 일치도가 양호합니다.")
+        else:
+            feedback.append("스타일 일치도가 낮습니다. 키워드를 바꿔보세요.")
+        # 날씨/계절 적합도(간단 규칙)
+        if weather in ("맑음", "바람"):
+            score += 5
+        if season in ("여름", "봄") and style_analysis and style_analysis.get("color") in ("화이트", "파란색", "라이트톤"):
+            score += 3
+        score = max(0, min(100, score))
+        # 레이블
+        label = "우수" if score >= 80 else ("보통" if score >= 60 else "개선 필요")
+        return {"score": score, "label": label, "feedback": feedback}
     
     def _get_temperature_guidance(self, temperature):
         """온도별 코디 가이드"""

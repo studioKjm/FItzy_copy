@@ -6,6 +6,9 @@ ultralytics>=8.0.0  # YOLOv5
 # 이미지 처리
 opencv-python>=4.6.0
 Pillow>=9.0.0
+rembg>=2.0.50  # 배경 제거
+mediapipe>=0.10.0  # 얼굴/체형 분석
+scikit-image>=0.21.0
 
 # 웹 프레임워크
 streamlit>=1.25.0

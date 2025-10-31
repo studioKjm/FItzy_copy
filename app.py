@@ -10,6 +10,10 @@ import io
 from src.utils.recommendation_engine import RecommendationEngine
 from src.models.models import FashionRecommender
 from src.utils.model_manager import ModelManager
+from src.utils.visualization import draw_detections
+from src.utils.background_removal import remove_background, extract_person_mask
+from src.utils.body_analysis import BodyAnalyzer
+from src.utils.scoring_system import ScoringSystem
 from config import MBTI_STYLES, SEASONAL_GUIDE, WEATHER_GUIDE
 
 # 전역 변수로 추천 엔진 초기화
@@ -19,6 +23,10 @@ if 'fashion_recommender' not in st.session_state:
     st.session_state.fashion_recommender = FashionRecommender()
 if 'model_manager' not in st.session_state:
     st.session_state.model_manager = ModelManager()
+if 'body_analyzer' not in st.session_state:
+    st.session_state.body_analyzer = BodyAnalyzer()
+if 'scoring_system' not in st.session_state:
+    st.session_state.scoring_system = ScoringSystem()
 
 def main():
     """메인 애플리케이션 함수"""
@@ -33,6 +41,12 @@ def main():
         mbti_type = st.selectbox("MBTI 유형", 
                                 ["ENFP", "ISTJ", "ESFP", "INTJ", "기타"])
         
+        # 성별 선택
+        gender = st.selectbox("성별", ["남성", "여성", "공용"], index=0)
+
+        # 진단 모드
+        debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=False)
+
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
         temperature = st.slider("온도 (°C)", -10, 40, 20)
@@ -46,15 +60,153 @@ def main():
     
     with tab1:
         # 이미지 업로드 및 분석
-        uploaded_file = st.file_uploader("옷 이미지를 업로드하세요", type=['png', 'jpg', 'jpeg'])
+        uploaded_file = st.file_uploader("옷 이미지를 업로드하세요", type=['png', 'jpg', 'jpeg'], key="image_uploader")
         
+        # 이미지가 변경되었는지 확인하기 위한 키
         if uploaded_file:
+            # 파일이 변경되었는지 확인
+            file_id = uploaded_file.name + str(uploaded_file.size)
+            if 'last_file_id' not in st.session_state or st.session_state.last_file_id != file_id:
+                st.session_state.last_file_id = file_id
+                # 이미지 관련 캐시 초기화
+                if 'processed_image' in st.session_state:
+                    del st.session_state.processed_image
+                if 'face_info_cache' in st.session_state:
+                    del st.session_state.face_info_cache
+                if 'body_info_cache' in st.session_state:
+                    del st.session_state.body_info_cache
             st.success("이미지 업로드 완료! 분석 중...")
-            # 이미지 표시
+            # 이미지 로드
             image = Image.open(uploaded_file)
-            st.image(image, caption="업로드된 이미지", use_container_width=True)
+            
+            # 배경 제거 옵션
+            use_background_removal = st.checkbox("🎭 배경 제거 후 분석", value=True, help="배경을 제거하여 의류 분석 정확도 향상")
+            
+            # 배경 제거 처리
+            processed_image = image
+            if use_background_removal:
+                with st.spinner("배경 제거 중..."):
+                    processed_image = remove_background(image)
+            
+            # 이미지 표시 (원본/배경제거 비교)
+            col_img1, col_img2 = st.columns(2)
+            with col_img1:
+                st.image(image, caption="원본 이미지", use_container_width=True)
+            with col_img2:
+                if use_background_removal:
+                    # 배경 제거 결과 확인
+                    if processed_image.mode == 'RGBA':
+                        # 투명 배경 이미지 (배경 제거 성공)
+                        st.image(processed_image, caption="배경 제거 이미지 (RGBA)", use_container_width=True)
+                    else:
+                        # RGB 모드인 경우 (배경 제거 실패 또는 원본)
+                        st.warning("⚠️ 배경 제거가 제대로 작동하지 않았습니다. rembg 라이브러리를 확인하세요.")
+                        st.image(processed_image, caption="처리된 이미지", use_container_width=True)
+                else:
+                    st.image(image, caption="원본 이미지 (배경 제거 안 함)", use_container_width=True)
+            
+            # 얼굴 및 체형 분석
+            st.subheader("👤 얼굴 및 체형 분석")
+            with st.spinner("얼굴 및 체형 분석 중..."):
+                face_info = st.session_state.body_analyzer.analyze_face(processed_image)
+                body_info = st.session_state.body_analyzer.analyze_body(processed_image)
+            
+            # 분석 결과 표시
+            col_face, col_body = st.columns(2)
+            with col_face:
+                if face_info.get("detected"):
+                    st.success("✅ 얼굴 탐지됨")
+                    st.write(f"**얼굴 형태:** {face_info.get('face_shape', '알 수 없음')}")
+                    st.write(f"**눈 크기:** {face_info.get('eye_size', '알 수 없음')}")
+                else:
+                    st.warning("⚠️ 얼굴을 찾을 수 없습니다")
+                    st.info(face_info.get("message", "얼굴이 명확하게 보이도록 이미지를 업로드해주세요."))
+            
+            with col_body:
+                if body_info.get("detected"):
+                    st.success("✅ 체형 분석됨")
+                    st.write(f"**체형:** {body_info.get('body_type', '알 수 없음')}")
+                    if body_info.get("body_ratio"):
+                        st.write(f"**체형 비율:** {body_info.get('body_ratio', 0):.2f}")
+                else:
+                    st.warning("⚠️ 체형을 분석할 수 없습니다")
+                    st.info(body_info.get("message", "전신 사진을 업로드해주세요."))
+            
+            # 코디 추천 결과 표시 (배경 제거 이미지 사용, 얼굴/체형 정보 포함)
+            # 먼저 YOLO/CLIP 분석 실행 (점수 계산을 위해)
+            fr = st.session_state.fashion_recommender
+            result = fr.recommend_outfit(processed_image, mbti_type, temperature, weather, season)
+            
+            # 외모 및 패션 점수 계산
+            appearance_scores = st.session_state.scoring_system.score_appearance(face_info, body_info)
+            fashion_scores = st.session_state.scoring_system.score_fashion(
+                result.get("detected_items", {}).get("items", []),
+                result.get("style_analysis", {}),
+                weather,
+                season
+            )
+            
+            # 점수 표시
+            st.subheader("📊 외모 및 패션 점수")
+            
+            col_score1, col_score2 = st.columns(2)
+            with col_score1:
+                st.markdown("### 👤 외모 점수")
+                st.metric("얼굴", f"{appearance_scores['얼굴']}/100", 
+                         delta=f"{appearance_scores['얼굴'] - 70}", 
+                         delta_color="normal" if appearance_scores['얼굴'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(appearance_scores['얼굴']))
+                
+                st.metric("체형", f"{appearance_scores['체형']}/100",
+                         delta=f"{appearance_scores['체형'] - 70}",
+                         delta_color="normal" if appearance_scores['체형'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(appearance_scores['체형']))
+                
+                st.metric("전체 외모", f"{appearance_scores['전체 외모']}/100",
+                         delta=f"{appearance_scores['전체 외모'] - 70}",
+                         delta_color="normal" if appearance_scores['전체 외모'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(appearance_scores['전체 외모']))
+            
+            with col_score2:
+                st.markdown("### 👗 패션 점수")
+                st.metric("아이템 구성", f"{fashion_scores['아이템 구성']}/100",
+                         delta=f"{fashion_scores['아이템 구성'] - 70}",
+                         delta_color="normal" if fashion_scores['아이템 구성'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(fashion_scores['아이템 구성']))
+                
+                st.metric("스타일 일치도", f"{fashion_scores['스타일 일치도']}/100",
+                         delta=f"{fashion_scores['스타일 일치도'] - 70}",
+                         delta_color="normal" if fashion_scores['스타일 일치도'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(fashion_scores['스타일 일치도']))
+                
+                st.metric("계절 적합성", f"{fashion_scores['계절 적합성']}/100",
+                         delta=f"{fashion_scores['계절 적합성'] - 70}",
+                         delta_color="normal" if fashion_scores['계절 적합성'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(fashion_scores['계절 적합성']))
+                
+                st.metric("날씨 적합성", f"{fashion_scores['날씨 적합성']}/100",
+                         delta=f"{fashion_scores['날씨 적합성'] - 70}",
+                         delta_color="normal" if fashion_scores['날씨 적합성'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(fashion_scores['날씨 적합성']))
+                
+                st.metric("전체 패션", f"{fashion_scores['전체 패션']}/100",
+                         delta=f"{fashion_scores['전체 패션'] - 70}",
+                         delta_color="normal" if fashion_scores['전체 패션'] >= 70 else "inverse")
+                st.caption(st.session_state.scoring_system.get_score_label(fashion_scores['전체 패션']))
+            
+            # 상세 피드백
+            feedback = st.session_state.scoring_system.get_detailed_feedback(appearance_scores, fashion_scores, season)
+            if feedback:
+                with st.expander("💡 개선 제안"):
+                    for fb in feedback:
+                        st.write(fb)
+            
             # 코디 추천 결과 표시
-            display_outfit_recommendations(image, mbti_type, temperature, weather, season)
+            display_outfit_recommendations(
+                processed_image, mbti_type, temperature, weather, season, 
+                gender, debug_mode, face_info, body_info, original_image=image,
+                precomputed_result=result, appearance_scores=appearance_scores, fashion_scores=fashion_scores
+            )
     
     with tab2:
         # 텍스트 기반 코디 검색
@@ -95,12 +247,97 @@ def main():
         # 모델 관리 페이지
         display_model_manager()
 
-def display_outfit_recommendations(image, mbti, temp, weather, season):
+def display_outfit_recommendations(image, mbti, temp, weather, season, gender, debug_mode=False, 
+                                   face_info=None, body_info=None, original_image=None,
+                                   precomputed_result=None, appearance_scores=None, fashion_scores=None):
     """코디 추천 결과 표시"""
-    # 추천 생성
-    recommendations = st.session_state.recommendation_engine.get_personalized_recommendation(
-        mbti, temp, weather, season
-    )
+    # 통합 추천 + 탐지/분석 실행 (이미 계산된 경우 재사용)
+    if precomputed_result is None:
+        fr = st.session_state.fashion_recommender
+        result = fr.recommend_outfit(image, mbti, temp, weather, season)
+    else:
+        result = precomputed_result
+    
+    recommendations = st.session_state.recommendation_engine.get_personalized_recommendation(mbti, temp, weather, season)
+
+    # 진단 모드: YOLO/CLIP 상세 출력
+    if debug_mode:
+        with st.expander("🧪 모델 진단 (YOLO/CLIP)", expanded=True):
+            det = result.get("detected_items", {}).get("items", [])
+            vis_img = draw_detections(image, det) if det else image
+            st.image(vis_img, caption="YOLO 탐지 시각화", use_container_width=True)
+
+            # 탐지 표
+            if det:
+                st.markdown("**YOLO 탐지 결과**")
+                img_w, img_h = image.size
+                st.info(f"📐 이미지 크기: {img_w} x {img_h} 픽셀")
+                
+                for i, d in enumerate(det, 1):
+                    bbox = d.get('bbox', [])
+                    if len(bbox) == 4:
+                        x1, y1, x2, y2 = bbox
+                        width = x2 - x1
+                        height = y2 - y1
+                        area_ratio = (width * height) / (img_w * img_h) * 100 if (img_w * img_h) > 0 else 0
+                        st.write(f"{i}. **{d.get('class','?')}** (신뢰도: {d.get('confidence',0):.2f})")
+                        st.write(f"   - 바운딩박스: [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
+                        st.write(f"   - 크기: {width:.0f} x {height:.0f} (이미지의 {area_ratio:.1f}%)")
+                        
+                        # COCO 모델 경고
+                        if d.get('class') == 'person':
+                            st.warning("⚠️ COCO 모델은 'person'만 탐지합니다. 패션 아이템 세부 탐지는 패션 전용 모델 학습이 필요합니다.")
+                    else:
+                        st.write(f"{i}. {d.get('class','?')} (conf {d.get('confidence',0):.2f}) bbox=잘못된 형식")
+            else:
+                st.info("탐지된 아이템이 없습니다.")
+
+            # CLIP 유사도 상위 K
+            sa = result.get("style_analysis", {})
+            matches = sa.get("text_matches", {})
+            if matches:
+                st.markdown("**CLIP 유사도 상위 항목**")
+                st.info(f"📊 분석된 키워드 수: {len(matches)}개")
+                
+                # 색상과 스타일 분리
+                color_matches = {k: v for k in matches.keys() if any(c in k.lower() for c in ['색', 'color', 'red', 'blue', 'white', 'black', 'yellow', 'green', 'purple', 'pink', 'orange', 'navy', 'khaki', 'beige', 'gray', 'grey'])}
+                style_matches = {k: v for k in matches.keys() if k not in color_matches}
+                
+                if color_matches:
+                    st.markdown("**🎨 색상 유사도**")
+                    top_colors = sorted(color_matches.items(), key=lambda x: x[1], reverse=True)[:10]
+                    for k, v in top_colors:
+                        st.write(f"- {k}: {v:.3f}")
+                
+                if style_matches:
+                    st.markdown("**👔 스타일 유사도**")
+                    top_styles = sorted(style_matches.items(), key=lambda x: x[1], reverse=True)[:10]
+                    for k, v in top_styles:
+                        st.write(f"- {k}: {v:.3f}")
+                
+                # 전체 상위 10개
+                top = sorted(matches.items(), key=lambda x: x[1], reverse=True)[:10]
+                try:
+                    import pandas as pd
+                    import altair as alt
+                    df = pd.DataFrame(top, columns=["label","score"])
+                    chart = alt.Chart(df).mark_bar().encode(x='label', y='score')
+                    st.altair_chart(chart, use_container_width=True)
+                except Exception:
+                    pass
+            else:
+                st.info("CLIP 유사도 결과가 없습니다.")
+
+            # 원시 결과 미리보기
+            import json
+            st.markdown("**원시 결과 미리보기**")
+            preview = {
+                "detected_items": result.get("detected_items", {}).get("items", []),
+                "style_analysis": {
+                    k: v for k, v in sa.items() if k in ("style","color","confidence")
+                }
+            }
+            st.code(json.dumps(preview, ensure_ascii=False, indent=2), language="json")
     
     st.subheader("🎯 추천 코디 (3가지 버전)")
     
@@ -129,6 +366,11 @@ def display_outfit_recommendations(image, mbti, temp, weather, season):
             else:
                 st.write(f"• {recommendations['weather_info']['accessories'][0]}")
                 st.write(f"• {recommendations['temperature_guidance']['material']} 재킷")
+            # 구체 제품 추천
+            products = st.session_state.recommendation_engine.recommend_products(style, gender)
+            st.write("**추천 제품:**")
+            for p in products:
+                st.write(f"• {p}")
     
     # 추천 이유
     st.subheader("💡 이 조합이 어울리는 이유")
@@ -145,6 +387,36 @@ def display_outfit_recommendations(image, mbti, temp, weather, season):
     for style in outfit_styles:
         makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
         st.write(f"**{style} 스타일:** {makeup}")
+
+    # 얼굴/체형 기반 개인화 추천
+    if face_info and body_info:
+        body_recommendations = st.session_state.body_analyzer.get_recommendation_based_on_body(
+            face_info if face_info else {},
+            body_info if body_info else {}
+        )
+        if body_recommendations:
+            st.subheader("👤 체형 맞춤 추천")
+            for rec in body_recommendations:
+                st.info(f"💡 {rec}")
+    
+    # 현재 코디 평가
+    st.subheader("🧭 현재 코디 평가")
+    eval_result = st.session_state.recommendation_engine.evaluate_current_outfit(
+        result.get("detected_items", {}).get("items", []),
+        result.get("style_analysis", {}),
+        weather,
+        season
+    )
+    st.write(f"**점수:** {eval_result['score']} / 100 ({eval_result['label']})")
+    st.write("**피드백:**")
+    for fb in eval_result["feedback"]:
+        st.write(f"• {fb}")
+    
+    # 얼굴/체형 정보 추가 피드백
+    if face_info and face_info.get("detected"):
+        st.write(f"• 얼굴 형태({face_info.get('face_shape')})에 맞는 넥라인 추천")
+    if body_info and body_info.get("detected"):
+        st.write(f"• 체형({body_info.get('body_type')})에 최적화된 실루엣 추천")
 
 def display_text_search_results(query, mbti):
     """텍스트 검색 결과 표시"""
