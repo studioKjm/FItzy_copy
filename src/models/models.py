@@ -14,6 +14,23 @@ import os
 class YOLODetector:
     """YOLOv5를 사용한 옷 아이템 탐지 클래스"""
     
+    # 영어 클래스 이름 → 한국어 매핑 (DeepFashion2 13개 클래스)
+    FASHION_CLASS_MAPPING = {
+        "long sleeve dress": "긴팔 드레스",
+        "long sleeve outwear": "긴팔 아우터",
+        "long sleeve top": "긴팔 상의",
+        "short sleeve dress": "반팔 드레스",
+        "short sleeve outwear": "반팔 아우터",
+        "short sleeve top": "반팔 상의",
+        "shorts": "반바지",
+        "skirt": "스커트",
+        "sling dress": "끈 드레스",
+        "sling": "끈 상의",
+        "trousers": "바지",
+        "vest dress": "조끼 드레스",
+        "vest": "조끼"
+    }
+    
     def __init__(self, model_path=None):
         """YOLOv5 모델 초기화"""
         if model_path is None:
@@ -25,10 +42,15 @@ class YOLODetector:
             print("사전 학습된 YOLOv5 모델을 사용합니다: yolov5n")
             # COCO 사전 학습 모델 사용 (person, bag 등 일반 객체 탐지)
             self.model = YOLO('yolov5n.pt')
+            self.is_fashion_model = False
             print("일반 객체 탐지 모델로 동작합니다. 패션 전용 모델 학습이 필요합니다.")
         else:
             self.model = YOLO(model_path)
-            print(f"YOLOv5 모델 로드 완료: {model_path}")
+            self.is_fashion_model = True
+            print(f"YOLOv5 패션 모델 로드 완료: {model_path}")
+            # 학습된 클래스 확인
+            if hasattr(self.model, 'names') and self.model.names:
+                print(f"탐지 가능한 클래스: {list(self.model.names.values())[:5]}...")
     
     def detect_clothes(self, image):
         """이미지에서 옷 아이템 탐지"""
@@ -51,21 +73,36 @@ class YOLODetector:
                 confidence = float(box.conf[0])
                 bbox = box.xyxy[0].cpu().numpy().tolist()
                 
-                # COCO 클래스 이름 가져오기
+                # 클래스 이름 가져오기
                 class_name = self.model.names[class_id]
                 
-                # 패션 관련 객체만 필터링 (person, bag, backpack 등)
-                fashion_related = ['person', 'handbag', 'backpack', 'suitcase', 'sports ball']
-                if class_name in fashion_related or confidence > 0.3:
-                    detected_items.append({
-                        "class": class_name,
-                        "confidence": confidence,
-                        "bbox": bbox
-                    })
+                # 패션 모델인 경우: 모든 탐지 결과 사용 (이미 패션 아이템만 탐지)
+                if self.is_fashion_model:
+                    # 신뢰도 임계값 설정 (필요시 조정)
+                    if confidence > 0.25:  # 패션 모델은 낮은 임계값 사용
+                        # 한국어 클래스 이름으로 변환
+                        korean_name = self.FASHION_CLASS_MAPPING.get(class_name, class_name)
+                        
+                        detected_items.append({
+                            "class": korean_name,
+                            "class_en": class_name,  # 원본 영어 이름도 유지
+                            "confidence": confidence,
+                            "bbox": bbox
+                        })
+                else:
+                    # COCO 모델인 경우: 기존 필터링 로직 유지
+                    fashion_related = ['person', 'handbag', 'backpack', 'suitcase', 'sports ball']
+                    if class_name in fashion_related or confidence > 0.3:
+                        detected_items.append({
+                            "class": class_name,
+                            "confidence": confidence,
+                            "bbox": bbox
+                        })
         
         return {
             "items": detected_items,
-            "image_size": image.size if isinstance(image, Image.Image) else (img_array.shape[1], img_array.shape[0])
+            "image_size": image.size if isinstance(image, Image.Image) else (img_array.shape[1], img_array.shape[0]),
+            "is_fashion_model": self.is_fashion_model
         }
 
 class CLIPAnalyzer:
