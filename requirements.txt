@@ -1,13 +1,14 @@
-# Fitzy 패션 코디 추천 앱 - 필수 패키지
-
 # 딥러닝 프레임워크
-torch>=1.12.0
-torchvision>=0.13.0
+torch>=2.2.0
+torchvision>=0.17.0
 ultralytics>=8.0.0  # YOLOv5
 
 # 이미지 처리
 opencv-python>=4.6.0
 Pillow>=9.0.0
+rembg>=2.0.50  # 배경 제거
+mediapipe>=0.10.0  # 얼굴/체형 분석
+scikit-image>=0.21.0
 
 # 웹 프레임워크
 streamlit>=1.25.0
@@ -19,11 +20,13 @@ pandas>=1.4.0
 
 # CLIP 모델
 transformers>=4.20.0
-clip-by-openai>=1.0
+ftfy>=6.1.0
+regex>=2022.0.0
 
 # 유틸리티
 python-dotenv>=0.19.0
 tqdm>=4.64.0
+psutil>=5.9.0
 
 # 개발 도구
 pytest>=7.0.0
