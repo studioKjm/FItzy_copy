@@ -7,7 +7,7 @@ ultralytics>=8.0.0  # YOLOv5
 opencv-python>=4.6.0
 Pillow>=9.0.0
 rembg>=2.0.50  # 배경 제거
-mediapipe>=0.10.0  # 얼굴/체형 분석
+# mediapipe>=0.10.0  # 얼굴/체형 분석 (Python 3.13 미지원 - Python 3.11 또는 3.12에서만 설치 가능)
 scikit-image>=0.21.0
 
 # 웹 프레임워크
