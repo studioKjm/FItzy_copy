@@ -28,6 +28,51 @@ if 'body_analyzer' not in st.session_state:
 if 'scoring_system' not in st.session_state:
     st.session_state.scoring_system = ScoringSystem()
 
+def detect_gender_from_image(image, clip_analyzer, result=None):
+    """이미지에서 성별 인식 (의상 기반 + CLIP 조합 - 개선)"""
+    detected_gender = None
+    
+    # 방법 1: 탐지된 의상 기반 판단 (우선순위 높음)
+    if result and result.get("detected_items", {}).get("items"):
+        items = result["detected_items"]["items"]
+        if items:
+            classes = []
+            for item in items:
+                class_ko = item.get("class", "")
+                class_en = item.get("class_en", "")
+                if class_ko:
+                    classes.append(class_ko.lower())
+                if class_en:
+                    classes.append(class_en.lower())
+            
+            all_classes_str = " ".join(classes)
+            
+            # 여성 의상 특징 (더 많은 키워드)
+            female_keywords = ["dress", "드레스", "skirt", "스커트", "sling", "끈", 
+                              "vest dress", "조끼 드레스", "sling dress", "끈 드레스"]
+            # 남성 의상 특징 (더 정확한 키워드)
+            male_keywords = ["shirt", "셔츠", "trousers", "바지", "vest", "조끼"]
+            
+            female_count = sum(1 for kw in female_keywords if kw in all_classes_str)
+            male_count = sum(1 for kw in male_keywords if kw in all_classes_str)
+            
+            # 더 엄격한 판단: 명확한 차이가 있을 때만
+            if female_count > 0 and female_count > male_count:
+                detected_gender = "여성"
+            elif male_count > 0 and male_count > female_count:
+                detected_gender = "남성"
+    
+    # 방법 2: CLIP 기반 인식 (의상 기반이 불확실한 경우만)
+    if not detected_gender:
+        try:
+            clip_gender = clip_analyzer.detect_gender(image)
+            if clip_gender:
+                detected_gender = clip_gender
+        except:
+            pass
+    
+    return detected_gender
+
 def main():
     """메인 애플리케이션 함수"""
     st.title("👗 Fitzy - AI 패션 코디 추천")
@@ -41,8 +86,33 @@ def main():
         mbti_type = st.selectbox("MBTI 유형", 
                                 ["ENFP", "ISTJ", "ESFP", "INTJ", "기타"])
         
-        # 성별 선택
-        gender = st.selectbox("성별", ["남성", "여성", "공용"], index=0)
+        # 성별 선택 (자동 인식 기능)
+        gender_options = ["남성", "여성", "공용"]
+        
+        # 초기화
+        if 'selected_gender' not in st.session_state:
+            st.session_state.selected_gender = 0
+        
+        # 자동 인식된 성별이 있으면 업데이트 (하지만 수동 변경도 허용)
+        if 'auto_gender' in st.session_state and st.session_state.auto_gender:
+            gender_index_map = {"남성": 0, "여성": 1, "공용": 2}
+            auto_index = gender_index_map.get(st.session_state.auto_gender, st.session_state.selected_gender)
+            # 자동 인식 성별과 현재 선택이 다르면 자동 인식값으로 업데이트
+            if st.session_state.selected_gender != auto_index:
+                st.session_state.selected_gender = auto_index
+        
+        gender = st.selectbox("성별", gender_options, index=st.session_state.selected_gender, key="gender_selectbox")
+        
+        # 수동 선택 시 업데이트
+        if gender != gender_options[st.session_state.selected_gender]:
+            st.session_state.selected_gender = gender_options.index(gender)
+        
+        # 자동 인식 성별 표시
+        if 'auto_gender' in st.session_state and st.session_state.auto_gender:
+            if gender == st.session_state.auto_gender:
+                st.info(f"✅ 자동 인식: {st.session_state.auto_gender}")
+            else:
+                st.warning(f"🤖 자동 인식: {st.session_state.auto_gender} (현재: {gender})")
 
         # 진단 모드
         debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=False)
@@ -141,6 +211,18 @@ def main():
             with st.spinner("얼굴 및 체형 분석 중..."):
                 face_info = st.session_state.body_analyzer.analyze_face(processed_image)
                 body_info = st.session_state.body_analyzer.analyze_body(processed_image)
+                
+                # 성별 자동 인식 (이미지가 변경된 경우에만)
+                import hashlib
+                current_image_hash = hashlib.md5(processed_image.tobytes()).hexdigest()
+                
+                # last_image_hash 초기화 확인
+                if 'last_image_hash' not in st.session_state:
+                    st.session_state.last_image_hash = None
+                
+                # 이미지 해시 저장 (성별 인식은 result 생성 후 수행)
+                if current_image_hash != st.session_state.last_image_hash:
+                    st.session_state.last_image_hash = current_image_hash
             
             # 분석 결과 표시
             col_face, col_body = st.columns(2)
@@ -151,6 +233,25 @@ def main():
                     st.write(f"**눈 크기:** {face_info.get('eye_size', '알 수 없음')}")
                     if face_info.get("face_ratio"):
                         st.caption(f"얼굴 비율: {face_info.get('face_ratio', 0):.2f}")
+                    
+                    # DeepFace 분석 결과 표시
+                    if face_info.get("age"):
+                        st.write(f"**추정 나이:** {face_info.get('age')}세")
+                    if face_info.get("emotion"):
+                        emotion_map = {
+                            "happy": "😊 행복",
+                            "sad": "😢 슬픔",
+                            "angry": "😠 화남",
+                            "surprise": "😮 놀람",
+                            "fear": "😨 두려움",
+                            "disgust": "🤢 혐오",
+                            "neutral": "😐 무표정"
+                        }
+                        emotion = face_info.get("emotion", "")
+                        emotion_display = emotion_map.get(emotion, emotion)
+                        st.write(f"**감정:** {emotion_display}")
+                    if face_info.get("gender_deepface"):
+                        st.write(f"**DeepFace 성별 인식:** {face_info.get('gender_deepface')}")
                 else:
                     st.warning("⚠️ 얼굴을 찾을 수 없습니다")
                     message = face_info.get("message", "얼굴이 명확하게 보이도록 이미지를 업로드해주세요.")
@@ -173,13 +274,42 @@ def main():
             fr = st.session_state.fashion_recommender
             result = fr.recommend_outfit(processed_image, mbti_type, temperature, weather, season)
             
+            # 성별 자동 인식 (얼굴 특징 기반 + DeepFace + 의상 기반 + CLIP)
+            if current_image_hash != st.session_state.get('last_gender_hash', None):
+                # 방법 1: 얼굴 특징 기반 성별 인식 (MediaPipe 얼굴 분석 결과 활용)
+                # 이미 analyze_face가 호출되어 face_info에 결과가 있음
+                detected_gender = None
+                
+                # 얼굴 특징 기반 추정 시도
+                if face_info and face_info.get("detected"):
+                    detected_gender = st.session_state.body_analyzer._estimate_gender_from_features(face_info)
+                
+                # 방법 2: DeepFace 사용 (설치된 경우)
+                if not detected_gender:
+                    detected_gender = st.session_state.body_analyzer.detect_gender(processed_image)
+                
+                # 방법 3: 의상 기반 판단
+                if not detected_gender:
+                    detected_gender = detect_gender_from_image(
+                        processed_image, 
+                        fr.analyzer,
+                        result
+                    )
+                
+                if detected_gender and detected_gender != "공용":
+                    st.session_state.auto_gender = detected_gender
+                    gender_index_map = {"남성": 0, "여성": 1, "공용": 2}
+                    st.session_state.selected_gender = gender_index_map.get(detected_gender, 0)
+                st.session_state.last_gender_hash = current_image_hash
+            
             # 외모 및 패션 점수 계산
             appearance_scores = st.session_state.scoring_system.score_appearance(face_info, body_info)
             fashion_scores = st.session_state.scoring_system.score_fashion(
                 result.get("detected_items", {}).get("items", []),
                 result.get("style_analysis", {}),
                 weather,
-                season
+                season,
+                temperature  # 온도 파라미터 추가
             )
             
             # 점수 표시

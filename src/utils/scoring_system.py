@@ -20,29 +20,82 @@ class ScoringSystem:
             "전체 외모": 0
         }
         
-        # 얼굴 점수 (0-100)
+        # 얼굴 점수 (0-100) - 개선된 로직 (DeepFace + 황금 비율 고려)
         if face_info and face_info.get("detected"):
             face_shape = face_info.get("face_shape", "")
             face_ratio = face_info.get("face_ratio", 1.0)
             
-            # 얼굴 형태 점수 (균형잡힌 형태일수록 높은 점수)
+            # DeepFace 결과 활용 (더 정확한 분석)
+            age = face_info.get("age", None)
+            emotion = face_info.get("emotion", "")
+            gender_deepface = face_info.get("gender_deepface", "")
+            
+            # 얼굴 비율 기반 점수 (황금 비율 0.618 또는 이상적 비율 0.75-0.85 고려)
+            # 이상적 얼굴 비율: 0.75-0.85 (약 0.8 부근)
+            ideal_ratio = 0.8
+            ratio_deviation = abs(face_ratio - ideal_ratio) if face_ratio else 0.3
+            
+            # 비율 점수 (0-40점): 이상적 비율에 가까울수록 높은 점수
+            if ratio_deviation <= 0.05:  # 0.75-0.85 (이상적)
+                ratio_score = 40
+            elif ratio_deviation <= 0.10:  # 0.70-0.90 (양호)
+                ratio_score = 35
+            elif ratio_deviation <= 0.15:  # 0.65-0.95 (보통)
+                ratio_score = 28
+            else:  # 너무 벗어남
+                ratio_score = 18
+            
+            # 얼굴 형태 보정 점수 (0-25점)
+            shape_bonus = 0
             if face_shape == "계란형":
-                scores["얼굴"] = 85
+                shape_bonus = 20  # 가장 이상적
+            elif face_shape == "사각형":
+                shape_bonus = 18  # 각진 형태도 좋음
             elif face_shape == "둥근형":
-                scores["얼굴"] = 75
+                shape_bonus = 12
             elif face_shape == "길쭉한형":
-                scores["얼굴"] = 70
+                shape_bonus = 8
             else:
-                scores["얼굴"] = 65
+                shape_bonus = 5
             
-            # 얼굴 비율 보정 (0.7-0.9 사이면 이상적)
-            if 0.7 <= face_ratio <= 0.9:
-                scores["얼굴"] += 5
-            
-            # 눈 크기 보정
+            # 눈 크기 보정 (0-10점)
+            eye_bonus = 0
             eye_size = face_info.get("eye_size", "")
             if eye_size == "큰 편":
-                scores["얼굴"] += 5
+                eye_bonus = 8
+            elif eye_size == "작은 편":
+                eye_bonus = 2
+            
+            # 나이 보정 (0-10점): 젊을수록 보너스
+            age_bonus = 0
+            if age:
+                if 20 <= age <= 30:
+                    age_bonus = 8  # 가장 이상적 나이대
+                elif 18 <= age < 20 or 30 < age <= 35:
+                    age_bonus = 5
+                elif 15 <= age < 18 or 35 < age <= 40:
+                    age_bonus = 3
+                else:
+                    age_bonus = 1
+            
+            # 감정 보정 (0-5점): 긍정적 감정 보너스
+            emotion_bonus = 0
+            positive_emotions = ["happy", "surprise", "neutral"]
+            if emotion in positive_emotions:
+                emotion_bonus = 3
+            elif emotion:
+                emotion_bonus = 1
+            
+            # 기본 점수
+            base_score = 15  # 기본 점수
+            
+            scores["얼굴"] = base_score + ratio_score + shape_bonus + eye_bonus + age_bonus + emotion_bonus
+            
+            # 점수 범위 제한 (0-100)
+            scores["얼굴"] = max(40, min(100, scores["얼굴"]))
+            
+            # 디버그 정보 (필요시 주석 해제)
+            # print(f"DEBUG 얼굴 점수: base={base_score}, ratio={ratio_score}, shape={shape_bonus}, eye={eye_bonus}, age={age_bonus}, emotion={emotion_bonus}, 총={scores['얼굴']}")
         else:
             scores["얼굴"] = 50  # 기본값
         
@@ -73,7 +126,7 @@ class ScoringSystem:
         return scores
     
     def score_fashion(self, detected_items: list, style_analysis: dict, 
-                     weather: str, season: str) -> dict:
+                     weather: str, season: str, temperature: float = None) -> dict:
         """패션 점수 평가"""
         scores = {
             "아이템 구성": 0,
@@ -121,7 +174,7 @@ class ScoringSystem:
         else:
             scores["스타일 일치도"] = 50
         
-        # 계절 적합성 점수 (0-100)
+        # 계절 적합성 점수 (0-100) - 개선: 의상 길이/종류 고려
         seasonal_colors = {
             "봄": ["파스텔", "라이트톤", "핑크", "라벤더", "옐로우"],
             "여름": ["화이트", "브라이트", "아쿠아", "화이트", "화이트"],
@@ -129,32 +182,118 @@ class ScoringSystem:
             "겨울": ["다크톤", "딥컬러", "블랙", "네이비", "그레이"]
         }
         
+        # 추운 계절 판별 (온도 기반)
+        is_cold = temperature is not None and temperature < 10
+        is_very_cold = temperature is not None and temperature < 0
+        is_warm = temperature is not None and temperature >= 20
+        
+        # 탐지된 의상 종류 분석
+        has_long_clothes = False
+        has_short_clothes = False
+        
+        if detected_items:
+            detected_classes = [item.get("class", "") for item in detected_items if item.get("class")]  # None 제외
+            detected_classes_en = [item.get("class_en", "") for item in detected_items if item.get("class_en")]  # None 제외
+            all_classes = [c.lower() for c in detected_classes + detected_classes_en if c and isinstance(c, str)]  # 빈 문자열 및 None 제외
+            
+            # 디버그: 의상 클래스 확인 (필요시 주석 해제)
+            # print(f"DEBUG 계절: detected_items 개수={len(detected_items)}, all_classes={all_classes}")
+            
+            # 긴 옷 / 짧은 옷 구분 (더 정확한 매칭)
+            has_long_clothes = any(
+                "긴팔" in c or "long sleeve" in c or 
+                "trousers" in c or ("바지" in c and "반바지" not in c) or
+                "아우터" in c or "outwear" in c 
+                for c in all_classes
+            )
+            has_short_clothes = any(
+                "반팔" in c or "short sleeve" in c or 
+                "반바지" in c or "shorts" in c or 
+                ("드레스" in c or "dress" in c) or
+                ("상의" in c and "긴팔" not in c)
+                for c in all_classes
+            )
+        
+        # 색상 적합성 점수 (0-40점)
+        color_score = 0
         if style_analysis:
             detected_color = style_analysis.get("color", "")
             season_colors = seasonal_colors.get(season, [])
             
-            # 계절 색상과 일치하는지 확인
             if detected_color:
                 if any(season_color.lower() in detected_color.lower() for season_color in season_colors):
-                    scores["계절 적합성"] = 85
+                    color_score = 35  # 계절 색상 일치
                 elif detected_color in ["검은색", "black", "흰색", "white"]:  # 사계절 적합
-                    scores["계절 적합성"] = 70
+                    color_score = 25
                 else:
-                    scores["계절 적합성"] = 55
+                    color_score = 15  # 다른 색상
             else:
-                scores["계절 적합성"] = 60
+                color_score = 20  # 색상 불명확
         else:
-            scores["계절 적합성"] = 60
+            color_score = 15  # 스타일 분석 없음
         
-        # 날씨 적합성 점수 (0-100)
-        weather_scores = {
+        # 의상 길이/종류 적합성 점수 (0-60점) - 온도에 따라 엄격하게 평가
+        length_score = 0
+        if is_very_cold:  # 영하 (< 0도)
+            if has_long_clothes and not has_short_clothes:
+                length_score = 55  # 긴 옷만 있으면 높은 점수
+            elif has_short_clothes and not has_long_clothes:
+                length_score = 10   # 짧은 옷만 있으면 매우 낮은 점수 (핵심 수정)
+            elif has_long_clothes and has_short_clothes:
+                length_score = 25   # 둘 다 있으면 중간
+            else:
+                length_score = 20   # 불확실
+        elif is_cold:  # 0-10도
+            if has_long_clothes and not has_short_clothes:
+                length_score = 50
+            elif has_short_clothes and not has_long_clothes:
+                length_score = 15   # 추운 날씨에 짧은 옷은 부적합
+            elif has_long_clothes and has_short_clothes:
+                length_score = 30   # 혼용
+            else:
+                length_score = 25
+        elif is_warm:  # 20도 이상
+            if has_short_clothes:
+                length_score = 50  # 더운 날씨에 짧은 옷 적합
+            elif has_long_clothes:
+                length_score = 30
+            else:
+                length_score = 35
+        else:  # 중간 온도 (10-20도)
+            length_score = 35  # 둘 다 적합
+        
+        # 계절 적합성 = 색상 점수 + 길이 점수
+        scores["계절 적합성"] = color_score + length_score
+        scores["계절 적합성"] = min(100, max(0, scores["계절 적합성"]))
+        
+        # 디버그 정보 (필요시 주석 해제)
+        # print(f"DEBUG 계절 적합성: 온도={temperature}, is_very_cold={is_very_cold}, has_long={has_long_clothes}, has_short={has_short_clothes}")
+        # print(f"DEBUG: color_score={color_score}, length_score={length_score}, 총={scores['계절 적합성']}")
+        
+        # 날씨 적합성 점수 (0-100) - 온도 고려
+        weather_base_scores = {
             "맑음": 80,
             "흐림": 75,
             "비": 70,
             "눈": 65,
             "바람": 75
         }
-        scores["날씨 적합성"] = weather_scores.get(weather, 70)
+        weather_base = weather_base_scores.get(weather, 70)
+        
+        # 온도 보정
+        if temperature is not None:
+            if temperature < 0:  # 영하
+                if weather == "눈":
+                    weather_base = 60
+                else:
+                    weather_base = 65
+            elif temperature > 25:  # 여름 날씨
+                if weather == "맑음":
+                    weather_base = 85
+                else:
+                    weather_base = 75
+        
+        scores["날씨 적합성"] = weather_base
         
         # 전체 패션 점수 (가중 평균)
         weights = {

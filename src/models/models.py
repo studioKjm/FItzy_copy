@@ -108,6 +108,36 @@ class YOLODetector:
 class CLIPAnalyzer:
     """CLIP 모델을 사용한 스타일 분석 클래스"""
     
+    def detect_gender(self, image):
+        """CLIP을 사용한 성별 인식 (개선: 더 구체적인 키워드 사용)"""
+        try:
+            # 더 구체적인 성별 관련 키워드
+            gender_texts = [
+                "남성 패션", "여성 패션", "남자 옷", "여자 옷",
+                "male clothing", "female clothing", "men's fashion", "women's fashion",
+                "남성 의상", "여성 의상", "남성 스타일", "여성 스타일"
+            ]
+            similarities = self.analyze_style(image, gender_texts)
+            
+            if similarities and similarities.get("text_matches"):
+                matches = similarities["text_matches"]
+                # 남성 관련 키워드 점수 합산
+                male_score = sum(v for k, v in matches.items() if any(word in k.lower() for word in ["남성", "남자", "male", "men"]))
+                # 여성 관련 키워드 점수 합산
+                female_score = sum(v for k, v in matches.items() if any(word in k.lower() for word in ["여성", "여자", "female", "women"]))
+                
+                # 임계값 상향: 더 확실할 때만 판별
+                score_diff = abs(male_score - female_score)
+                if male_score > female_score and score_diff > 0.15:  # 0.15 이상 차이
+                    return "남성"
+                elif female_score > male_score and score_diff > 0.15:
+                    return "여성"
+                else:
+                    return None  # 불확실하면 None 반환 (의상 기반 판단에 의존)
+            return None
+        except Exception as e:
+            return None
+    
     def __init__(self, model_name="openai/clip-vit-base-patch32"):
         """CLIP 모델 초기화"""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
