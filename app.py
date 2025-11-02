@@ -5,6 +5,7 @@ Streamlit 기반 웹 인터페이스
 
 import streamlit as st
 import datetime
+import os
 from PIL import Image
 import io
 from src.utils.recommendation_engine import RecommendationEngine
@@ -93,29 +94,145 @@ def main():
         if 'selected_gender' not in st.session_state:
             st.session_state.selected_gender = 0
         
-        # 자동 인식된 성별이 있으면 업데이트 (하지만 수동 변경도 허용)
+        # rerun 후 자동 업데이트 플래그 확인 및 리셋
+        if 'gender_auto_update_pending' in st.session_state and st.session_state.gender_auto_update_pending:
+            if 'auto_gender' in st.session_state and st.session_state.auto_gender:
+                gender_index_map = {"남성": 0, "여성": 1, "공용": 2}
+                auto_index = gender_index_map.get(st.session_state.auto_gender, st.session_state.selected_gender)
+                st.session_state.selected_gender = auto_index
+            st.session_state.gender_auto_update_pending = False
+        
+        # 자동 인식된 성별이 있으면 즉시 업데이트
         if 'auto_gender' in st.session_state and st.session_state.auto_gender:
             gender_index_map = {"남성": 0, "여성": 1, "공용": 2}
             auto_index = gender_index_map.get(st.session_state.auto_gender, st.session_state.selected_gender)
-            # 자동 인식 성별과 현재 선택이 다르면 자동 인식값으로 업데이트
+            # 자동 인식 성별로 강제 업데이트 (이미지 변경 시 자동 반영)
             if st.session_state.selected_gender != auto_index:
                 st.session_state.selected_gender = auto_index
         
-        gender = st.selectbox("성별", gender_options, index=st.session_state.selected_gender, key="gender_selectbox")
+        # selectbox: 현재 선택된 성별로 표시
+        # key에 성별 인덱스를 포함하여 값이 변경되면 재생성되도록 함
+        current_selected_index = st.session_state.selected_gender
+        gender = st.selectbox(
+            "성별", 
+            gender_options, 
+            index=current_selected_index,
+            key=f"gender_selectbox_{current_selected_index}"  # 인덱스 변경 시 재생성
+        )
         
-        # 수동 선택 시 업데이트
-        if gender != gender_options[st.session_state.selected_gender]:
+        # 수동 선택 시 업데이트 (사용자가 직접 변경한 경우)
+        current_selected_gender = gender_options[current_selected_index]
+        if gender != current_selected_gender:
             st.session_state.selected_gender = gender_options.index(gender)
         
-        # 자동 인식 성별 표시
+        # 자동 인식 성별 표시 (즉시 표시)
         if 'auto_gender' in st.session_state and st.session_state.auto_gender:
             if gender == st.session_state.auto_gender:
-                st.info(f"✅ 자동 인식: {st.session_state.auto_gender}")
+                st.success(f"✅ 자동 인식: {st.session_state.auto_gender}")
             else:
-                st.warning(f"🤖 자동 인식: {st.session_state.auto_gender} (현재: {gender})")
+                # 자동 인식과 다르면 표시만 (이미지 분석 부분에서 rerun이 처리됨)
+                st.info(f"🤖 자동 인식: {st.session_state.auto_gender}")
+                # selected_gender는 이미 업데이트되었으므로 rerun 후 반영됨
 
         # 진단 모드
         debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=False)
+        
+        # AI 이미지 생성 설정 (선택적)
+        with st.expander("🎨 AI 이미지 생성 설정", expanded=False):
+            # 초기화 (한 번만)
+            if 'enable_ai_images' not in st.session_state:
+                st.session_state.enable_ai_images = True
+            if 'auto_generate_images' not in st.session_state:
+                st.session_state.auto_generate_images = True
+            if 'image_gen_method' not in st.session_state:
+                st.session_state.image_gen_method = "stable_diffusion"
+            if 'num_auto_images' not in st.session_state:
+                st.session_state.num_auto_images = 1
+            
+            # 위젯 표시 (key를 지정하면 자동으로 session_state에 저장됨)
+            enable_ai_images = st.toggle(
+                "AI 이미지 생성 활성화", 
+                value=st.session_state.enable_ai_images, 
+                key="enable_ai_images"
+            )
+            auto_generate = st.toggle(
+                "자동 생성 (추천 코디 표시 시 자동 생성)", 
+                value=st.session_state.auto_generate_images, 
+                key="auto_generate_images"
+            )
+            
+            if enable_ai_images:
+                image_gen_method = st.selectbox(
+                    "이미지 생성 방법",
+                    ["huggingface_api", "dall_e", "stable_diffusion", "stability_ai"],
+                    index=0,  # huggingface_api 기본값
+                    key="image_gen_method",
+                    help="huggingface_api: 무료 (Hugging Face API), dall_e: 유료 (OpenAI), stable_diffusion: 무료 (로컬, GPU 필요), stability_ai: 유료 (Stability AI)"
+                )
+                
+                # 생성할 이미지 개수 선택
+                if auto_generate:
+                    num_auto_images = st.slider(
+                        "자동 생성할 이미지 개수 (추천 코디 중)",
+                        min_value=1,
+                        max_value=3,
+                        value=st.session_state.num_auto_images,
+                        key="num_auto_images",
+                        help="추천 코디 3개 중 몇 개의 이미지를 자동 생성할지 선택"
+                    )
+                
+                # API 키 입력 (Hugging Face의 경우)
+                if image_gen_method == "huggingface_api":
+                    hf_api_key = st.text_input(
+                        "Hugging Face API 키 (선택적)",
+                        value=os.getenv("HUGGINGFACE_API_KEY", ""),
+                        type="password",
+                        key="hf_api_key_input",
+                        help="무료 티어는 API 키 없이도 사용 가능하지만, 키가 있으면 더 빠릅니다. 빈칸으로 두면 무료 티어 사용"
+                    )
+                    if hf_api_key:
+                        # 환경 변수에 임시 설정 (세션 동안만)
+                        os.environ["HUGGINGFACE_API_KEY"] = hf_api_key
+                    else:
+                        # 빈 키면 환경 변수에서도 제거
+                        if "HUGGINGFACE_API_KEY" in os.environ:
+                            del os.environ["HUGGINGFACE_API_KEY"]
+                    
+                    if not hf_api_key:
+                        st.warning("⚠️ **API 키 필수**: 최근 정책 변경으로 모든 모델에 API 키가 필요합니다.")
+                        st.info("💡 무료 계정으로도 API 키 발급 가능합니다.")
+                    else:
+                        st.success("✅ API 키 설정됨")
+                    
+                    with st.expander("📖 API 키 발급 방법 (단계별)", expanded=False):
+                        st.markdown("""
+                        1. **Hugging Face 계정 생성** (무료)
+                           - https://huggingface.co/join 접속
+                        2. **API 토큰 생성**
+                           - https://huggingface.co/settings/tokens 접속
+                           - "New token" 클릭
+                           - Name: `fitzy-app` (임의)
+                           - Type: **"Read"** 선택 (⚠️ 필수!)
+                           - "Generate a token" 클릭
+                           - 생성된 토큰 복사 (한 번만 표시됨)
+                        3. **앱에 입력**
+                           - 위 입력란에 복사한 토큰 붙여넣기
+                        """)
+                    
+                    st.caption("🔗 API 키 발급: https://huggingface.co/settings/tokens")
+                    st.caption("⚠️ 'Read' 권한 필수! 다른 권한 선택 시 403 오류 발생")
+                
+                # API 키 안내 (다른 방법들)
+                elif image_gen_method == "dall_e":
+                    st.info("💡 OpenAI API 키가 필요합니다: 환경 변수 OPENAI_API_KEY 설정")
+                elif image_gen_method == "stability_ai":
+                    st.info("💡 Stability AI API 키가 필요합니다: 환경 변수 STABILITY_AI_API_KEY 설정")
+                elif image_gen_method == "stable_diffusion":
+                    st.info("💡 로컬 실행 (M2 맥북 지원)")
+                    st.caption("📦 설치: `pip install diffusers accelerate`")
+                    st.caption("🍎 Apple Silicon (M1/M2) 자동 감지 및 최적화")
+                    st.caption("💾 메모리: 약 4GB 모델 다운로드 필요 (처음만)")
+                    st.caption("⏱️ 생성 시간: 약 30-60초 (M2 맥북 기준)")
 
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
@@ -275,6 +392,7 @@ def main():
             result = fr.recommend_outfit(processed_image, mbti_type, temperature, weather, season)
             
             # 성별 자동 인식 (얼굴 특징 기반 + DeepFace + 의상 기반 + CLIP)
+            gender_changed = False
             if current_image_hash != st.session_state.get('last_gender_hash', None):
                 # 방법 1: 얼굴 특징 기반 성별 인식 (MediaPipe 얼굴 분석 결과 활용)
                 # 이미 analyze_face가 호출되어 face_info에 결과가 있음
@@ -297,19 +415,35 @@ def main():
                     )
                 
                 if detected_gender and detected_gender != "공용":
+                    # 기존 성별과 비교하여 변경 여부 확인
+                    old_gender = st.session_state.get('auto_gender')
                     st.session_state.auto_gender = detected_gender
                     gender_index_map = {"남성": 0, "여성": 1, "공용": 2}
-                    st.session_state.selected_gender = gender_index_map.get(detected_gender, 0)
+                    new_gender_index = gender_index_map.get(detected_gender, 0)
+                    
+                    # 성별이 변경되었거나 처음 인식하는 경우
+                    if old_gender != detected_gender or st.session_state.selected_gender != new_gender_index:
+                        st.session_state.selected_gender = new_gender_index
+                        st.session_state.gender_auto_update_pending = True  # rerun 후 업데이트 플래그
+                        gender_changed = True
+                
                 st.session_state.last_gender_hash = current_image_hash
+                
+                # 성별이 변경되었으면 즉시 사이드바 반영
+                if gender_changed:
+                    st.rerun()
             
-            # 외모 및 패션 점수 계산
-            appearance_scores = st.session_state.scoring_system.score_appearance(face_info, body_info)
+            # 외모 및 패션 점수 계산 (향상된 시스템 사용)
+            appearance_scores = st.session_state.scoring_system.score_appearance(
+                face_info, body_info, image=processed_image
+            )
             fashion_scores = st.session_state.scoring_system.score_fashion(
                 result.get("detected_items", {}).get("items", []),
                 result.get("style_analysis", {}),
                 weather,
                 season,
-                temperature  # 온도 파라미터 추가
+                temperature,
+                image=processed_image  # 이미지 전달 (향상된 분석용)
             )
             
             # 점수 표시
@@ -424,7 +558,15 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     else:
         result = precomputed_result
     
-    recommendations = st.session_state.recommendation_engine.get_personalized_recommendation(mbti, temp, weather, season)
+    # 이미지 분석 결과를 추천에 반영
+    detected_items_data = result.get("detected_items", {})
+    style_analysis_data = result.get("style_analysis", {})
+    
+    recommendations = st.session_state.recommendation_engine.get_personalized_recommendation(
+        mbti, temp, weather, season,
+        detected_items=detected_items_data.get("items", []),
+        style_analysis=style_analysis_data
+    )
 
     # 진단 모드: YOLO/CLIP 상세 출력
     if debug_mode:
@@ -446,7 +588,19 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                         width = x2 - x1
                         height = y2 - y1
                         area_ratio = (width * height) / (img_w * img_h) * 100 if (img_w * img_h) > 0 else 0
-                        st.write(f"{i}. **{d.get('class','?')}** (신뢰도: {d.get('confidence',0):.2f})")
+                        
+                        class_display = d.get('class', '?')
+                        original_class = d.get('original_class', '')
+                        class_en = d.get('class_en', '')
+                        
+                        # CLIP 검증으로 수정된 경우 표시
+                        if original_class and original_class != class_en:
+                            st.write(f"{i}. **{class_display}** (신뢰도: {d.get('confidence',0):.2f})")
+                            st.caption(f"   🔄 YOLO 원본: {original_class} → CLIP 검증 후: {class_display}")
+                            st.success("✅ CLIP 검증으로 정정되었습니다")
+                        else:
+                            st.write(f"{i}. **{class_display}** (신뢰도: {d.get('confidence',0):.2f})")
+                        
                         st.write(f"   - 바운딩박스: [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
                         st.write(f"   - 크기: {width:.0f} x {height:.0f} (이미지의 {area_ratio:.1f}%)")
                         
@@ -508,36 +662,351 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     
     st.subheader("🎯 추천 코디 (3가지 버전)")
     
+    # 이미지 분석 결과 기반 동적 스타일 선택
+    image_suggestions = recommendations.get("image_suggestions", {})
+    style_matches = image_suggestions.get("style_matches", {})
+    image_based_combinations = image_suggestions.get("recommendation_based_on_image", [])
+    
+    # CLIP 스타일 점수 기반으로 스타일 순서 결정
+    if style_matches:
+        # 점수가 높은 순으로 정렬
+        sorted_styles = sorted(style_matches.items(), key=lambda x: x[1], reverse=True)
+        top_styles = [style[0] for style in sorted_styles[:3]]
+        
+        # 기본 스타일과 결합 (고정된 3개가 아닌 동적 선택)
+        outfit_styles_list = []
+        for style in ["캐주얼", "포멀", "트렌디"]:
+            if style in top_styles:
+                outfit_styles_list.append(style)
+        
+        # 부족하면 기본 스타일로 채움
+        for style in ["캐주얼", "포멀", "트렌디"]:
+            if len(outfit_styles_list) < 3 and style not in outfit_styles_list:
+                outfit_styles_list.append(style)
+        
+        outfit_styles = outfit_styles_list[:3]
+    else:
+        outfit_styles = ["캐주얼", "포멀", "트렌디"]
+    
+    # 이미지 기반 조합이 있으면 우선 사용
+    has_image_based = len(image_based_combinations) > 0
+    
     # 3가지 버전 코디 추천
     col1, col2, col3 = st.columns(3)
     
-    outfit_styles = ["캐주얼", "포멀", "트렌디"]
-    outfit_descriptions = [
-        f"{recommendations['mbti_style']['style']} 스타일",
-        f"{recommendations['seasonal_info']['mood']}한 {recommendations['seasonal_info']['materials'][0]} 소재",
-        f"{recommendations['weather_info']['mood']}한 스타일"
-    ]
+    # 각 버전별 설명 생성 (이미지 분석 결과 반영)
+    # 색상 추천 추출 (CLIP 분석 결과 활용)
+    color_suggestions = image_suggestions.get("color_matches", {})
+    top_colors = []
+    if color_suggestions:
+        top_colors = sorted(color_suggestions.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    outfit_descriptions = []
+    for idx, style in enumerate(outfit_styles):
+        if has_image_based and idx < len(image_based_combinations):
+            # 이미지 기반 조합 우선 사용
+            combo = image_based_combinations[idx]
+            reason = combo.get("reason", f"{style} 스타일")
+            # 색상 추천 추가
+            if top_colors and idx < len(top_colors):
+                color_name = top_colors[idx][0]
+                reason += f", {color_name} 톤 추천"
+            outfit_descriptions.append(reason)
+        else:
+            # 기존 방식 (MBTI/계절/날씨 기반) + 색상 추천
+            base_desc = ""
+            if idx == 0:
+                base_desc = f"{recommendations['mbti_style']['style']} 스타일"
+                # MBTI 색상 추가
+                if recommendations['mbti_style'].get('colors'):
+                    base_desc += f", {recommendations['mbti_style']['colors'][0]} 톤"
+            elif idx == 1:
+                base_desc = f"{recommendations['seasonal_info']['mood']}한 {recommendations['seasonal_info']['materials'][0]} 소재"
+                # 계절 색상 추가
+                if recommendations['seasonal_info'].get('colors'):
+                    base_desc += f", {recommendations['seasonal_info']['colors'][0]} 톤"
+            else:
+                base_desc = f"{recommendations['weather_info']['mood']}한 스타일"
+                # 이미지 분석 색상 추가 (있는 경우)
+                if top_colors:
+                    base_desc += f", {top_colors[0][0]} 톤 추천"
+            outfit_descriptions.append(base_desc)
     
     for idx, (col, style, desc) in enumerate(zip([col1, col2, col3], outfit_styles, outfit_descriptions)):
         with col:
             st.write(f"**추천 코디 {idx+1}**")
             st.write(f"**{style} 스타일**")
+            
+            # CLIP 점수 표시 (있는 경우)
+            if style_matches and style in style_matches:
+                score = style_matches[style]
+                st.caption(f"📊 이미지 분석 점수: {score:.2f}")
+            
             st.info(desc)
             st.write(f"**아이템:**")
-            if idx == 0:
-                st.write(f"• {recommendations['mbti_style']['colors'][0]} 상의")
-                st.write(f"• {recommendations['seasonal_info']['colors'][0]} 하의")
-            elif idx == 1:
-                st.write(f"• {recommendations['seasonal_info']['materials'][0]} 재킷")
-                st.write(f"• {recommendations['seasonal_info']['colors'][0]} 바지")
+            
+            # 표시될 아이템 텍스트 수집 (이미지 생성에 사용)
+            displayed_items = []
+            
+            # 이미지 기반 조합이 있으면 사용
+            if has_image_based and idx < len(image_based_combinations):
+                combo = image_based_combinations[idx]
+                items = combo.get("items", [])
+                for item in items:
+                    displayed_items.append(item)
+                    st.write(f"• {item}")
             else:
-                st.write(f"• {recommendations['weather_info']['accessories'][0]}")
-                st.write(f"• {recommendations['temperature_guidance']['material']} 재킷")
+                # 기존 방식 (템플릿 기반)
+                if idx == 0:
+                    # 이미지 색상 우선 사용, 없으면 MBTI 색상
+                    detected_colors = image_suggestions.get("color_matches", {})
+                    if detected_colors:
+                        top_color = max(detected_colors.items(), key=lambda x: x[1])[0]
+                        color_display = top_color
+                    else:
+                        color_display = recommendations['mbti_style']['colors'][0]
+                    
+                    item1 = f"{color_display} 상의"
+                    item2 = f"{recommendations['seasonal_info']['colors'][0]} 하의"
+                    displayed_items = [item1, item2]
+                    st.write(f"• {item1}")
+                    st.write(f"• {item2}")
+                elif idx == 1:
+                    item1 = f"{recommendations['seasonal_info']['materials'][0]} 재킷"
+                    item2 = f"{recommendations['seasonal_info']['colors'][0]} 바지"
+                    displayed_items = [item1, item2]
+                    st.write(f"• {item1}")
+                    st.write(f"• {item2}")
+                else:
+                    item1 = recommendations['weather_info']['accessories'][0]
+                    item2 = f"{recommendations['temperature_guidance']['material']} 재킷"
+                    displayed_items = [item1, item2]
+                    st.write(f"• {item1}")
+                    st.write(f"• {item2}")
+            
             # 구체 제품 추천
             products = st.session_state.recommendation_engine.recommend_products(style, gender)
             st.write("**추천 제품:**")
             for p in products:
                 st.write(f"• {p}")
+            
+            # AI 생성 이미지 (자동 생성 또는 버튼)
+            if 'enable_ai_images' in st.session_state and st.session_state.enable_ai_images:
+                try:
+                    from src.utils.image_generator import OutfitImageGenerator
+                    
+                    # 이미지 생성기 초기화 (세션 상태나 API 키 변경 시 재초기화)
+                    current_method = st.session_state.get("image_gen_method", "huggingface_api")
+                    current_hf_key = os.getenv("HUGGINGFACE_API_KEY", "").strip()
+                    
+                    # 재초기화가 필요한 경우 확인
+                    need_reinit = (
+                        'image_generator' not in st.session_state or
+                        st.session_state.get('last_image_gen_method') != current_method or
+                        (current_method == "huggingface_api" and 
+                         st.session_state.get('last_hf_api_key') != current_hf_key)
+                    )
+                    
+                    if need_reinit:
+                        # 프로토타입 사용 설정 (Stable Diffusion 로컬만)
+                        use_prototype = current_method == "stable_diffusion"
+                        st.session_state.image_generator = OutfitImageGenerator(
+                            method=current_method,
+                            use_prototype=use_prototype
+                        )
+                        st.session_state.last_image_gen_method = current_method
+                        if current_method == "huggingface_api":
+                            st.session_state.last_hf_api_key = current_hf_key
+                    
+                    # 코디 설명 구성 - 표시된 아이템 텍스트를 그대로 사용
+                    outfit_desc = {
+                        "items": displayed_items,  # ✅ 표시된 텍스트 그대로 사용
+                        "style": style,
+                        "colors": [color_display] if idx == 0 and 'color_display' in locals() else recommendations.get('seasonal_info', {}).get('colors', [])[:2],
+                        "gender": gender  # 성별 정보 추가
+                    }
+                    
+                    # 자동 생성 여부 확인
+                    auto_generate = st.session_state.get("auto_generate_images", False)
+                    num_auto_images = st.session_state.get("num_auto_images", 1)
+                    should_auto_generate = auto_generate and idx < num_auto_images
+                    
+                    # 이미지 생성 캐시 키 (이미지 해시 + 스타일 + 인덱스로 고유하게)
+                    current_image_hash = st.session_state.get("last_image_hash", "default")
+                    cache_key = f"generated_image_{current_image_hash}_{style}_{idx}"
+                    
+                    # 자동 생성 또는 캐시된 이미지 사용
+                    if should_auto_generate:
+                        if cache_key not in st.session_state:
+                            with st.spinner(f"🎨 {style} 스타일 AI 이미지 생성 중... (10-30초 소요)"):
+                                generated_image = st.session_state.image_generator.generate_outfit_image(
+                                    outfit_desc, style_info=recommendations
+                                )
+                                if generated_image:
+                                    st.session_state[cache_key] = generated_image
+                                    st.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
+                                    st.success("✅ 이미지 생성 완료")
+                                else:
+                                    st.warning("⚠️ 이미지 생성 실패")
+                                    with st.expander("🔍 문제 해결 가이드", expanded=True):
+                                        st.markdown("""
+                                        ### ⚠️ **현재 상황: Hugging Face API 제한**
+                                        
+                                        Hugging Face의 정책 변경으로 무료 계정에서 Inference API 사용이 제한되었습니다.
+                                        Read 토큰으로도 403/404 오류가 계속 발생한다면 **다른 방법 사용을 권장**합니다.
+                                        
+                                        ---
+                                        
+                                        ### 💡 **추천 해결 방법 (우선순위 순)**
+                                        
+                                        #### **방법 1: DALL-E API 사용** ⭐ 가장 안정적
+                                        
+                                        1. OpenAI 계정 생성: https://platform.openai.com
+                                        2. API 키 발급 (결제 정보 필요)
+                                        3. 사이드바 → "이미지 생성 방법" → **"dall_e"** 선택
+                                        4. 환경 변수 설정:
+                                           ```bash
+                                           export OPENAI_API_KEY="your-api-key"
+                                           ```
+                                        💰 비용: $0.04/image (1024x1024)
+                                        
+                                        #### **방법 2: Stable Diffusion 로컬 실행** ⭐ M2 맥북 최적화 (무료)
+                                        
+                                        1. 라이브러리 설치:
+                                           ```bash
+                                           pip install diffusers accelerate
+                                           ```
+                                        2. 사이드바 → "이미지 생성 방법" → **"stable_diffusion"** 선택
+                                        3. 자동으로 Apple Silicon (M2) 감지 및 최적화
+                                        
+                                        **특징:**
+                                        - ✅ 완전 무료 (API 비용 없음)
+                                        - ✅ M2 맥북 최적화 (MPS 백엔드 자동 사용)
+                                        - ✅ 오프라인 작동 가능
+                                        - ⏱️ 생성 시간: 약 30-60초 (M2 기준)
+                                        - 💾 첫 실행 시 모델 다운로드 (약 4GB, 한 번만)
+                                        
+                                        #### **방법 3: 이미지 생성 비활성화**
+                                        
+                                        - 사이드바 → "AI 이미지 생성 활성화" → **OFF**
+                                        - 텍스트 기반 추천만 사용
+                                        
+                                        ---
+                                        
+                                        ### ❌ **계속 시도해도 안 되는 경우**
+                                        
+                                        - Hugging Face Pro 계정 업그레이드 (유료, $9/month)
+                                        - 또는 위 대안 방법 사용 권장
+                                        """)
+                        else:
+                            # 캐시된 이미지 사용
+                            cached_image = st.session_state[cache_key]
+                            st.image(cached_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
+                            st.success("✅ 이미지 생성 완료 (캐시)")
+                    else:
+                        # 수동 생성 버튼
+                        gen_button_key = f"generate_image_{idx}"
+                        if st.button(f"🎨 {style} 스타일 이미지 생성", key=gen_button_key):
+                            with st.spinner(f"AI 이미지 생성 중... (10-30초 소요)"):
+                                generated_image = st.session_state.image_generator.generate_outfit_image(
+                                    outfit_desc, style_info=recommendations
+                                )
+                                if generated_image:
+                                    st.session_state[cache_key] = generated_image
+                                    st.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
+                                    st.success("✅ 이미지 생성 완료")
+                                else:
+                                    st.warning("⚠️ 이미지 생성 실패")
+                                    with st.expander("🔍 문제 해결 가이드", expanded=True):
+                                        st.markdown("""
+                                        ### ⚠️ **현재 상황: Hugging Face API 제한**
+                                        
+                                        Hugging Face의 정책 변경으로 무료 계정에서 Inference API 사용이 제한되었습니다.
+                                        Read 토큰으로도 403/404 오류가 계속 발생한다면 **다른 방법 사용을 권장**합니다.
+                                        
+                                        ---
+                                        
+                                        ### 💡 **추천 해결 방법 (우선순위 순)**
+                                        
+                                        #### **방법 1: DALL-E API 사용** ⭐ 가장 안정적
+                                        
+                                        1. OpenAI 계정 생성: https://platform.openai.com
+                                        2. API 키 발급 (결제 정보 필요)
+                                        3. 사이드바 → "이미지 생성 방법" → **"dall_e"** 선택
+                                        4. 환경 변수 설정:
+                                           ```bash
+                                           export OPENAI_API_KEY="your-api-key"
+                                           ```
+                                        💰 비용: $0.04/image (1024x1024)
+                                        
+                                        #### **방법 2: Stable Diffusion 로컬 실행** ⭐ M2 맥북 최적화 (무료)
+                                        
+                                        1. 라이브러리 설치:
+                                           ```bash
+                                           pip install diffusers accelerate
+                                           ```
+                                        2. 사이드바 → "이미지 생성 방법" → **"stable_diffusion"** 선택
+                                        3. 자동으로 Apple Silicon (M2) 감지 및 최적화
+                                        
+                                        **특징:**
+                                        - ✅ 완전 무료 (API 비용 없음)
+                                        - ✅ M2 맥북 최적화 (MPS 백엔드 자동 사용)
+                                        - ✅ 오프라인 작동 가능
+                                        - ⏱️ 생성 시간: 약 30-60초 (M2 기준)
+                                        - 💾 첫 실행 시 모델 다운로드 (약 4GB, 한 번만)
+                                        
+                                        #### **방법 3: 이미지 생성 비활성화**
+                                        
+                                        - 사이드바 → "AI 이미지 생성 활성화" → **OFF**
+                                        - 텍스트 기반 추천만 사용
+                                        
+                                        ---
+                                        
+                                        ### ❌ **계속 시도해도 안 되는 경우**
+                                        
+                                        - Hugging Face Pro 계정 업그레이드 (유료, $9/month)
+                                        - 또는 위 대안 방법 사용 권장
+                                        """)
+                except ImportError:
+                    st.caption("💡 AI 이미지 생성을 사용하려면 `pip install diffusers` 또는 API 키 설정이 필요합니다.")
+                except Exception as e:
+                    st.caption(f"💡 이미지 생성 기능 준비 중: {str(e)[:50]}")
+            
+            # 탐지된 아이템과 조화로운 아이템 표시
+            if image_suggestions and image_suggestions.get("detected_items_info"):
+                detected_info = image_suggestions["detected_items_info"]
+                if detected_info and idx == 0:  # 첫 번째 버전에만 표시
+                    item = detected_info[0]
+                    complementary = item.get("complementary_items", [])
+                    if complementary:
+                        st.caption(f"💡 현재 {item['item']}와 조화: {', '.join(complementary[:2])}")
+    
+    # 이미지 기반 추천 상세 정보 (있는 경우)
+    if image_suggestions and (image_suggestions.get("detected_items_info") or image_suggestions.get("style_matches")):
+        with st.expander("🖼️ 이미지 분석 기반 추천 상세", expanded=False):
+            if image_suggestions.get("detected_items_info"):
+                st.markdown("**탐지된 아이템:**")
+                for item_info in image_suggestions["detected_items_info"][:3]:
+                    item_name = item_info.get("item", "")
+                    confidence = item_info.get("confidence", 0)
+                    complementary = item_info.get("complementary_items", [])
+                    st.write(f"• **{item_name}** (신뢰도: {confidence:.2f})")
+                    if complementary:
+                        st.caption(f"  → 조화로운 아이템: {', '.join(complementary)}")
+            
+            if image_suggestions.get("style_matches"):
+                st.markdown("**CLIP 스타일 분석:**")
+                sorted_styles = sorted(image_suggestions["style_matches"].items(), 
+                                     key=lambda x: x[1], reverse=True)
+                for style_name, score in sorted_styles[:5]:
+                    st.write(f"• {style_name}: {score:.3f}")
+            
+            if image_suggestions.get("color_matches"):
+                st.markdown("**CLIP 색상 분석:**")
+                sorted_colors = sorted(image_suggestions["color_matches"].items(), 
+                                     key=lambda x: x[1], reverse=True)
+                for color_name, score in sorted_colors[:5]:
+                    st.write(f"• {color_name}: {score:.3f}")
     
     # 추천 이유
     st.subheader("💡 이 조합이 어울리는 이유")

@@ -13,8 +13,9 @@ class RecommendationEngine:
         self.seasonal_guide = SEASONAL_GUIDE
         self.weather_guide = WEATHER_GUIDE
     
-    def get_personalized_recommendation(self, mbti, temperature, weather, season):
-        """개인화된 코디 추천"""
+    def get_personalized_recommendation(self, mbti, temperature, weather, season,
+                                       detected_items=None, style_analysis=None):
+        """개인화된 코디 추천 (이미지 분석 결과 포함)"""
         # MBTI 기반 스타일 분석 (기타인 경우 ENFP 기본값 사용)
         if mbti == "기타":
             mbti = "ENFP"
@@ -29,15 +30,183 @@ class RecommendationEngine:
         # 온도별 추가 고려사항
         temp_guidance = self._get_temperature_guidance(temperature)
         
+        # 이미지 분석 결과 통합 (새로 추가)
+        image_based_suggestions = self._integrate_image_analysis(
+            detected_items, style_analysis, seasonal_info, weather_info
+        )
+        
         return {
             "mbti_style": mbti_style,
             "seasonal_info": seasonal_info,
             "weather_info": weather_info,
             "temperature_guidance": temp_guidance,
+            "image_suggestions": image_based_suggestions,  # 이미지 기반 추천 추가
             "recommendation_reason": self._generate_recommendation_reason(
-                mbti_style, seasonal_info, weather_info, temp_guidance
+                mbti_style, seasonal_info, weather_info, temp_guidance,
+                image_based_suggestions  # 이미지 분석 결과도 이유에 포함
             )
         }
+    
+    def _integrate_image_analysis(self, detected_items, style_analysis, 
+                                  seasonal_info, weather_info):
+        """이미지 분석 결과를 추천에 통합"""
+        suggestions = {
+            "detected_items_info": [],
+            "style_matches": {},
+            "color_matches": {},
+            "recommendation_based_on_image": []
+        }
+        
+        # 1. 탐지된 아이템 분석
+        if detected_items and len(detected_items) > 0:
+            items = detected_items if isinstance(detected_items, list) else detected_items.get("items", [])
+            
+            for item in items[:5]:  # 상위 5개만
+                item_class = item.get("class", "")
+                item_class_en = item.get("class_en", "")
+                confidence = item.get("confidence", 0)
+                
+                suggestions["detected_items_info"].append({
+                    "item": item_class,
+                    "confidence": confidence,
+                    "complementary_items": self._get_complementary_items(item_class, item_class_en)
+                })
+        
+        # 2. CLIP 스타일 분석 결과 활용
+        if style_analysis and style_analysis.get("text_matches"):
+            matches = style_analysis["text_matches"]
+            
+            # 스타일 키워드 필터링
+            style_keywords = ["캐주얼", "포멀", "트렌디", "스포츠", "빈티지", "모던", "로맨틱", "시크"]
+            style_scores = {k: v for k, v in matches.items() if k in style_keywords}
+            suggestions["style_matches"] = style_scores
+            
+            # 색상 키워드 필터링
+            color_keywords = ["빨간색", "파란색", "검은색", "흰색", "회색", "갈색", "베이지",
+                            "노란색", "yellow", "보라색", "purple", "오렌지", "orange",
+                            "초록색", "green", "분홍색", "pink", "네이비", "navy", "카키", "khaki"]
+            color_scores = {k: v for k, v in matches.items() if k in color_keywords}
+            suggestions["color_matches"] = color_scores
+        
+        # 3. 이미지 기반 조합 추천 생성
+        suggestions["recommendation_based_on_image"] = self._generate_image_based_combinations(
+            detected_items, style_analysis, seasonal_info
+        )
+        
+        return suggestions
+    
+    def _get_complementary_items(self, item_class, item_class_en):
+        """탐지된 아이템과 조화로운 추가 아이템 추천"""
+        complementary_map = {
+            # 상의
+            "반팔 상의": ["긴팔 재킷", "가디건", "베스트"],
+            "긴팔 상의": ["가디건", "후드집업", "스카프"],
+            "상의": ["재킷", "가디건", "목도리"],
+            
+            # 하의
+            "바지": ["부츠", "스니커즈", "벨트"],
+            "반바지": ["스니커즈", "슬리퍼", "삭스"],
+            "스커트": ["부츠", "플랫슈즈", "스타킹"],
+            
+            # 드레스
+            "드레스": ["재킷", "부츠", "가방"],
+            "반팔 드레스": ["가디건", "스니커즈", "모자"],
+            "긴팔 드레스": ["코트", "부츠", "가방"],
+        }
+        
+        # 한국어와 영어 모두 확인
+        for key in [item_class, item_class_en]:
+            if key in complementary_map:
+                return complementary_map[key]
+        
+        # 부분 매칭
+        if "상의" in item_class or "top" in item_class_en.lower():
+            return ["재킷", "가디건", "액세서리"]
+        elif "하의" in item_class or "trousers" in item_class_en.lower() or "shorts" in item_class_en.lower():
+            return ["신발", "벨트", "삭스"]
+        elif "드레스" in item_class or "dress" in item_class_en.lower():
+            return ["재킷", "신발", "가방"]
+        
+        return ["액세서리", "신발", "가방"]  # 기본값
+    
+    def _generate_image_based_combinations(self, detected_items, style_analysis, seasonal_info):
+        """이미지 분석 결과 기반 조합 추천 생성"""
+        combinations = []
+        
+        if not detected_items:
+            return combinations
+        
+        items = detected_items if isinstance(detected_items, list) else detected_items.get("items", [])
+        if not items:
+            return combinations
+        
+        # 탐지된 아이템에서 상의/하의/드레스 분류
+        tops = [item for item in items if "상의" in item.get("class", "") or "top" in item.get("class_en", "").lower()]
+        bottoms = [item for item in items if any(kw in item.get("class", "") for kw in ["바지", "반바지", "스커트"]) or 
+                   any(kw in item.get("class_en", "").lower() for kw in ["trousers", "shorts", "skirt"])]
+        dresses = [item for item in items if "드레스" in item.get("class", "") or "dress" in item.get("class_en", "").lower()]
+        
+        # CLIP 색상 분석
+        detected_color = None
+        if style_analysis and style_analysis.get("color"):
+            detected_color = style_analysis["color"]
+        elif style_analysis and style_analysis.get("text_matches"):
+            # 색상 점수가 가장 높은 것 선택
+            color_matches = {k: v for k, v in style_analysis["text_matches"].items() 
+                           if any(c in k.lower() for c in ["색", "color", "red", "blue", "black", "white"])}
+            if color_matches:
+                detected_color = max(color_matches.items(), key=lambda x: x[1])[0]
+        
+        # 조합 1: 상의 + 하의 조합
+        if tops and bottoms:
+            top_item = tops[0]
+            bottom_item = bottoms[0]
+            
+            # 계절 색상과 조화롭게
+            seasonal_color = seasonal_info.get("colors", ["뉴트럴"])[0] if seasonal_info else "뉴트럴"
+            recommended_color = detected_color if detected_color else seasonal_color
+            
+            combinations.append({
+                "type": "상하 분리형",
+                "items": [
+                    f"{recommended_color} {top_item.get('class', '상의')}",
+                    f"{seasonal_color} {bottom_item.get('class', '하의')}",
+                    "액세서리"
+                ],
+                "reason": f"현재 코디를 기반으로 {recommended_color} 톤으로 조화롭게 연출"
+            })
+        
+        # 조합 2: 드레스 기반
+        if dresses:
+            dress_item = dresses[0]
+            dress_color = detected_color if detected_color else seasonal_info.get("colors", ["뉴트럴"])[0]
+            
+            combinations.append({
+                "type": "원피스 스타일",
+                "items": [
+                    f"{dress_item.get('class', '드레스')}",
+                    "재킷 또는 가디건",
+                    "부츠 또는 스니커즈"
+                ],
+                "reason": f"탐지된 {dress_item.get('class', '드레스')}를 중심으로 레이어링 코디"
+            })
+        
+        # 조합 3: 단일 아이템 기반 확장
+        if (tops and not bottoms) or (bottoms and not tops):
+            single_item = tops[0] if tops else bottoms[0]
+            item_type = "상의" if tops else "하의"
+            
+            combinations.append({
+                "type": "단일 아이템 확장",
+                "items": [
+                    f"{single_item.get('class', item_type)}",
+                    self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))[0],
+                    self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))[1]
+                ],
+                "reason": f"현재 {single_item.get('class', item_type)}에 조화로운 아이템 추가"
+            })
+        
+        return combinations[:3]  # 최대 3개만
 
     def recommend_products(self, style: str, gender: str):
         """스타일/성별 기반 구체 제품 추천 (간단 카탈로그)"""
@@ -102,14 +271,32 @@ class RecommendationEngine:
         else:
             return {"layer": "최소", "material": "린넨", "mood": "시원하고 가벼운"}
     
-    def _generate_recommendation_reason(self, mbti_style, seasonal_info, weather_info, temp_guidance):
-        """추천 이유 생성"""
+    def _generate_recommendation_reason(self, mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions=None):
+        """추천 이유 생성 (이미지 분석 결과 포함)"""
         reasons = [
             f"• {mbti_style['style']} 스타일로 {mbti_style['mood']}한 분위기 연출",
             f"• {seasonal_info['mood']}한 {seasonal_info['colors'][0]} 컬러 조합",
             f"• {weather_info['mood']}한 {weather_info['accessories'][0]} 액세서리 추천",
             f"• {temp_guidance['mood']}한 {temp_guidance['material']} 소재 활용"
         ]
+        
+        # 이미지 분석 결과 기반 이유 추가
+        if image_suggestions:
+            detected_info = image_suggestions.get("detected_items_info", [])
+            if detected_info:
+                detected_names = [item["item"] for item in detected_info[:2]]
+                reasons.append(f"• 현재 코디의 {', '.join(detected_names)}를 고려한 조화로운 추천")
+            
+            style_matches = image_suggestions.get("style_matches", {})
+            if style_matches:
+                top_style = max(style_matches.items(), key=lambda x: x[1])[0]
+                reasons.append(f"• 이미지 분석 결과 {top_style} 스타일이 가장 높게 나타남")
+            
+            color_matches = image_suggestions.get("color_matches", {})
+            if color_matches:
+                top_color = max(color_matches.items(), key=lambda x: x[1])[0]
+                reasons.append(f"• 이미지에서 {top_color} 톤이 주로 감지되어 색상 조합에 반영")
+        
         return reasons
     
     def search_text_based_outfits(self, query):

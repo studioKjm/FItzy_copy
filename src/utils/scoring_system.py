@@ -4,16 +4,45 @@
 """
 
 import numpy as np
+from PIL import Image
+
+# 향상된 점수 계산 시스템 임포트 (선택적)
+try:
+    from src.utils.enhanced_scoring import EnhancedScoringSystem
+    ENHANCED_SCORING_AVAILABLE = True
+except ImportError:
+    ENHANCED_SCORING_AVAILABLE = False
 
 
 class ScoringSystem:
     """외모 및 패션 점수 평가 시스템"""
     
     def __init__(self):
-        pass
+        # 향상된 점수 계산 시스템 초기화 (선택적)
+        if ENHANCED_SCORING_AVAILABLE:
+            try:
+                self.enhanced_scorer = EnhancedScoringSystem()
+                self.use_enhanced = True
+            except Exception:
+                self.enhanced_scorer = None
+                self.use_enhanced = False
+        else:
+            self.enhanced_scorer = None
+            self.use_enhanced = False
     
-    def score_appearance(self, face_info: dict, body_info: dict) -> dict:
-        """외모 점수 평가"""
+    def score_appearance(self, face_info: dict, body_info: dict, image: Image.Image = None) -> dict:
+        """외모 점수 평가 (향상된 시스템 우선 사용)"""
+        # 향상된 점수 계산 시스템 사용
+        if self.use_enhanced and self.enhanced_scorer:
+            try:
+                return self.enhanced_scorer.calculate_enhanced_appearance_score(
+                    face_info, body_info, image
+                )
+            except Exception:
+                # 실패 시 기본 시스템 사용
+                pass
+        
+        # 기본 점수 계산 시스템
         scores = {
             "얼굴": 0,
             "체형": 0,
@@ -126,8 +155,20 @@ class ScoringSystem:
         return scores
     
     def score_fashion(self, detected_items: list, style_analysis: dict, 
-                     weather: str, season: str, temperature: float = None) -> dict:
-        """패션 점수 평가"""
+                     weather: str, season: str, temperature: float = None,
+                     image: Image.Image = None) -> dict:
+        """패션 점수 평가 (향상된 시스템 우선 사용)"""
+        # 향상된 점수 계산 시스템 사용
+        if self.use_enhanced and self.enhanced_scorer:
+            try:
+                return self.enhanced_scorer.calculate_enhanced_fashion_score(
+                    detected_items, style_analysis, weather, season, temperature, image
+                )
+            except Exception:
+                # 실패 시 기본 시스템 사용
+                pass
+        
+        # 기본 점수 계산 시스템
         scores = {
             "아이템 구성": 0,
             "스타일 일치도": 0,

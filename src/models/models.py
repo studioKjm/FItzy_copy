@@ -52,13 +52,15 @@ class YOLODetector:
             if hasattr(self.model, 'names') and self.model.names:
                 print(f"탐지 가능한 클래스: {list(self.model.names.values())[:5]}...")
     
-    def detect_clothes(self, image):
-        """이미지에서 옷 아이템 탐지"""
+    def detect_clothes(self, image, clip_analyzer=None):
+        """이미지에서 옷 아이템 탐지 (CLIP 검증 포함)"""
         # 이미지 전처리
         if isinstance(image, Image.Image):
             img_array = np.array(image)
+            pil_image = image
         elif isinstance(image, np.ndarray):
             img_array = image
+            pil_image = Image.fromarray(img_array)
         else:
             raise ValueError(f"Unsupported image type: {type(image)}")
         
@@ -78,16 +80,24 @@ class YOLODetector:
                 
                 # 패션 모델인 경우: 모든 탐지 결과 사용 (이미 패션 아이템만 탐지)
                 if self.is_fashion_model:
-                    # 신뢰도 임계값 설정 (필요시 조정)
-                    if confidence > 0.25:  # 패션 모델은 낮은 임계값 사용
+                    # 신뢰도 임계값 설정 (상향 조정)
+                    if confidence > 0.3:  # 임계값 상향 (0.25 → 0.3)
                         # 한국어 클래스 이름으로 변환
                         korean_name = self.FASHION_CLASS_MAPPING.get(class_name, class_name)
                         
+                        # CLIP 검증 (긴팔/반팔 구분 등)
+                        verified_class = self._verify_detection_with_clip(
+                            pil_image, bbox, class_name, korean_name, clip_analyzer
+                        ) if clip_analyzer else (class_name, korean_name)
+                        
+                        verified_class_en, verified_class_ko = verified_class
+                        
                         detected_items.append({
-                            "class": korean_name,
-                            "class_en": class_name,  # 원본 영어 이름도 유지
+                            "class": verified_class_ko,
+                            "class_en": verified_class_en,
                             "confidence": confidence,
-                            "bbox": bbox
+                            "bbox": bbox,
+                            "original_class": class_name  # 원본 클래스도 저장 (디버깅용)
                         })
                 else:
                     # COCO 모델인 경우: 기존 필터링 로직 유지
@@ -104,6 +114,65 @@ class YOLODetector:
             "image_size": image.size if isinstance(image, Image.Image) else (img_array.shape[1], img_array.shape[0]),
             "is_fashion_model": self.is_fashion_model
         }
+    
+    def _verify_detection_with_clip(self, image, bbox, class_name, korean_name, clip_analyzer):
+        """CLIP을 사용하여 YOLO 탐지 결과 검증 (특히 긴팔/반팔 구분)"""
+        try:
+            # bbox로 이미지 영역 잘라내기
+            x1, y1, x2, y2 = map(int, bbox)
+            width, height = image.size
+            
+            # bbox 범위 확인
+            x1 = max(0, min(x1, width))
+            y1 = max(0, min(y1, height))
+            x2 = max(x1, min(x2, width))
+            y2 = max(y1, min(y2, height))
+            
+            if x2 - x1 < 10 or y2 - y1 < 10:  # 너무 작은 영역은 건너뛰기
+                return (class_name, korean_name)
+            
+            # 의상 영역 추출
+            crop_image = image.crop((x1, y1, x2, y2))
+            
+            # 긴팔/반팔 구분 검증
+            if "sleeve" in class_name.lower() or "상의" in korean_name:
+                # 긴팔 vs 반팔 검증
+                long_sleeve_keywords = ["긴팔", "long sleeve", "롱 슬리브", "소매가 긴"]
+                short_sleeve_keywords = ["반팔", "short sleeve", "숏 슬리브", "소매가 짧은", "팔이 보이는"]
+                
+                # CLIP으로 실제 팔 길이 확인
+                test_keywords = ["long sleeve shirt", "short sleeve shirt", "긴팔", "반팔"]
+                similarity_result = clip_analyzer.analyze_style(crop_image, test_keywords)
+                
+                if similarity_result and similarity_result.get("text_matches"):
+                    matches = similarity_result["text_matches"]
+                    long_score = sum(v for k, v in matches.items() if any(word in k.lower() for word in ["long", "긴"]))
+                    short_score = sum(v for k, v in matches.items() if any(word in k.lower() for word in ["short", "반"]))
+                    
+                    # CLIP 검증 결과가 YOLO 결과와 다르면 수정
+                    is_originally_long = "long" in class_name.lower() or "긴팔" in korean_name
+                    
+                    if short_score > long_score + 0.2 and is_originally_long:
+                        # 반팔로 수정
+                        if "top" in class_name:
+                            return ("short sleeve top", "반팔 상의")
+                        elif "outwear" in class_name:
+                            return ("short sleeve outwear", "반팔 아우터")
+                        elif "dress" in class_name:
+                            return ("short sleeve dress", "반팔 드레스")
+                    elif long_score > short_score + 0.2 and not is_originally_long:
+                        # 긴팔로 수정
+                        if "top" in class_name:
+                            return ("long sleeve top", "긴팔 상의")
+                        elif "outwear" in class_name:
+                            return ("long sleeve outwear", "긴팔 아우터")
+                        elif "dress" in class_name:
+                            return ("long sleeve dress", "긴팔 드레스")
+        except Exception as e:
+            # 검증 실패 시 원본 클래스 반환
+            pass
+        
+        return (class_name, korean_name)
 
 class CLIPAnalyzer:
     """CLIP 모델을 사용한 스타일 분석 클래스"""
@@ -357,8 +426,8 @@ class FashionRecommender:
     
     def recommend_outfit(self, image, mbti, temperature, weather, season):
         """통합 코디 추천 파이프라인"""
-        # 1. YOLOv5로 옷 아이템 탐지
-        detected_items = self.detector.detect_clothes(image)
+        # 1. YOLOv5로 옷 아이템 탐지 (CLIP 검증 포함)
+        detected_items = self.detector.detect_clothes(image, clip_analyzer=self.analyzer)
         
         # 2. CLIP으로 스타일 및 색상 분석
         style_descriptions = ["캐주얼", "포멀", "트렌디", "스포츠", "빈티지", "모던"]

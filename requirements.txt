@@ -34,3 +34,12 @@ psutil>=5.9.0
 # 개발 도구
 pytest>=7.0.0
 black>=22.0.0
+
+# 향상된 점수 계산 (색상 분석 등)
+scikit-learn>=1.0.0  # K-means 클러스터링용
+
+# AI 이미지 생성 (선택적)
+# diffusers>=0.21.0  # Stable Diffusion 로컬 실행용 (M2 맥북 지원)
+# accelerate>=0.20.0  # Stable Diffusion 가속화 (선택적이지만 권장)
+# openai>=1.0.0  # DALL-E API 사용시
+# huggingface_hub>=0.16.0  # Hugging Face Inference API 사용시 (일부 기능)
