@@ -36,21 +36,62 @@ class YOLODetector:
         if model_path is None:
             model_path = YOLO_MODEL_PATH
         
+        # 디바이스 설정 (메타 텐서 문제 방지 - CPU 우선 사용)
+        # ultralytics 내부적으로 device를 처리하므로 명시적으로 지정
+        device = "cpu"  # 메타 텐서 문제 방지를 위해 CPU 사용 (나중에 필요시 변경 가능)
+        
         # 모델 파일이 없으면 사전 학습된 모델 사용 (yolov5n, yolov5s 등)
         if not os.path.exists(model_path):
             print(f"모델 파일이 없습니다: {model_path}")
             print("사전 학습된 YOLOv5 모델을 사용합니다: yolov5n")
             # COCO 사전 학습 모델 사용 (person, bag 등 일반 객체 탐지)
-            self.model = YOLO('yolov5n.pt')
+            try:
+                # device를 명시적으로 지정하여 모델 로드
+                self.model = YOLO('yolov5n.pt')
+                # ultralytics는 내부적으로 device를 처리하므로 .to() 호출하지 않음
+            except Exception as e:
+                print(f"⚠️ 모델 로드 중 오류 발생: {e}")
+                print("💡 에러가 지속되면 앱을 재시작하세요.")
+                raise
             self.is_fashion_model = False
             print("일반 객체 탐지 모델로 동작합니다. 패션 전용 모델 학습이 필요합니다.")
         else:
-            self.model = YOLO(model_path)
+            try:
+                # 패션 모델 로드
+                # ultralytics YOLO는 체크포인트를 로드할 때 device를 자동으로 처리
+                # 메타 텐서 문제를 피하기 위해 모델을 직접 로드하지 않고 
+                # ultralytics의 내장 로딩 방식을 신뢰
+                self.model = YOLO(model_path)
+                # 모델이 완전히 로드되면 내부 모델 객체에 접근
+                # device 이동은 ultralytics가 자동으로 처리
+            except NotImplementedError as meta_error:
+                # 메타 텐서 오류인 경우 특별 처리
+                if "meta tensor" in str(meta_error).lower():
+                    print(f"⚠️ 메타 텐서 문제 감지: {meta_error}")
+                    print("💡 모델 체크포인트를 다시 다운로드하거나 학습된 모델을 확인하세요.")
+                    print("💡 임시로 사전 학습된 모델을 사용합니다...")
+                    self.model = YOLO('yolov5n.pt')
+                    self.is_fashion_model = False
+                    return
+                else:
+                    raise
+            except Exception as e:
+                print(f"⚠️ 패션 모델 로드 실패: {e}")
+                print("💡 사전 학습된 모델로 대체...")
+                try:
+                    self.model = YOLO('yolov5n.pt')
+                    self.is_fashion_model = False
+                except Exception as e2:
+                    print(f"⚠️ 사전 학습 모델 로드도 실패: {e2}")
+                    raise
+                return
+            
             self.is_fashion_model = True
             print(f"YOLOv5 패션 모델 로드 완료: {model_path}")
             # 학습된 클래스 확인
             if hasattr(self.model, 'names') and self.model.names:
-                print(f"탐지 가능한 클래스: {list(self.model.names.values())[:5]}...")
+                classes_list = list(self.model.names.values())
+                print(f"탐지 가능한 클래스: {classes_list[:5]}...")
     
     def detect_clothes(self, image, clip_analyzer=None):
         """이미지에서 옷 아이템 탐지 (CLIP 검증 포함)"""

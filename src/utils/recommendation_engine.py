@@ -157,23 +157,50 @@ class RecommendationEngine:
             if color_matches:
                 detected_color = max(color_matches.items(), key=lambda x: x[1])[0]
         
-        # 조합 1: 상의 + 하의 조합
+        # 조합 1: 상의 + 하의 조합 (구체적 색상과 타입 포함)
         if tops and bottoms:
             top_item = tops[0]
             bottom_item = bottoms[0]
             
-            # 계절 색상과 조화롭게
+            # 상의 색상 (탐지된 색상 우선, 없으면 계절 색상)
             seasonal_color = seasonal_info.get("colors", ["뉴트럴"])[0] if seasonal_info else "뉴트럴"
-            recommended_color = detected_color if detected_color else seasonal_color
+            top_color = detected_color if detected_color else seasonal_color
+            
+            # 하의 색상 (조화로운 색상 선택)
+            bottom_color_map = {
+                "검은색": "회색", "흰색": "베이지", "빨간색": "검은색",
+                "파란색": "네이비", "노란색": "카키", "분홍색": "흰색"
+            }
+            bottom_color = bottom_color_map.get(top_color, "회색" if top_color == "검은색" else "베이지")
+            
+            # 상의 타입 구체화 (긴팔/반팔 구분)
+            top_class = top_item.get('class', '상의')
+            top_class_en = top_item.get('class_en', '').lower()
+            if "long sleeve" in top_class_en or "긴팔" in top_class:
+                top_type = "긴팔 셔츠"
+            elif "short sleeve" in top_class_en or "반팔" in top_class:
+                top_type = "반팔 티셔츠"
+            else:
+                top_type = "셔츠"
+            
+            # 하의 타입 구체화
+            bottom_class = bottom_item.get('class', '하의')
+            bottom_class_en = bottom_item.get('class_en', '').lower()
+            if "trousers" in bottom_class_en or "바지" in bottom_class:
+                bottom_type = "바지"
+            elif "shorts" in bottom_class_en or "반바지" in bottom_class:
+                bottom_type = "반바지"
+            else:
+                bottom_type = "하의"
             
             combinations.append({
                 "type": "상하 분리형",
                 "items": [
-                    f"{recommended_color} {top_item.get('class', '상의')}",
-                    f"{seasonal_color} {bottom_item.get('class', '하의')}",
-                    "액세서리"
+                    f"{top_color} {top_type}",
+                    f"{bottom_color} {bottom_type}",
+                    "부츠 또는 스니커즈"
                 ],
-                "reason": f"현재 코디를 기반으로 {recommended_color} 톤으로 조화롭게 연출"
+                "reason": f"현재 코디를 기반으로 {top_color} 톤으로 조화롭게 연출"
             })
         
         # 조합 2: 드레스 기반
@@ -191,19 +218,54 @@ class RecommendationEngine:
                 "reason": f"탐지된 {dress_item.get('class', '드레스')}를 중심으로 레이어링 코디"
             })
         
-        # 조합 3: 단일 아이템 기반 확장
+        # 조합 3: 단일 아이템 기반 확장 (구체적 색상 포함)
         if (tops and not bottoms) or (bottoms and not tops):
             single_item = tops[0] if tops else bottoms[0]
             item_type = "상의" if tops else "하의"
             
+            # 색상 추출
+            item_color = detected_color if detected_color else (seasonal_info.get("colors", ["뉴트럴"])[0] if seasonal_info else "뉴트럴")
+            
+            # 상의인 경우 구체적 타입
+            if tops:
+                top_class = single_item.get('class', '상의')
+                top_class_en = single_item.get('class_en', '').lower()
+                if "long sleeve" in top_class_en or "긴팔" in top_class:
+                    item_display = f"{item_color} 긴팔 셔츠"
+                elif "short sleeve" in top_class_en or "반팔" in top_class:
+                    item_display = f"{item_color} 반팔 티셔츠"
+                else:
+                    item_display = f"{item_color} 셔츠"
+            # 하의인 경우
+            else:
+                bottom_class = single_item.get('class', '하의')
+                bottom_class_en = single_item.get('class_en', '').lower()
+                if "trousers" in bottom_class_en or "바지" in bottom_class:
+                    item_display = f"{item_color} 바지"
+                elif "shorts" in bottom_class_en or "반바지" in bottom_class:
+                    item_display = f"{item_color} 반바지"
+                else:
+                    item_display = f"{item_color} {item_type}"
+            
+            # 조화로운 추가 아이템 색상
+            complementary_color = "검은색" if item_color in ["흰색", "베이지"] else "회색"
+            
+            complementary = self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))
+            items_list = [item_display]
+            
+            # 보완 아이템에 색상 추가
+            for comp_item in complementary[:2]:
+                if "신발" in comp_item or "부츠" in comp_item or "스니커즈" in comp_item:
+                    items_list.append(f"{complementary_color} {comp_item}")
+                elif "재킷" in comp_item or "가디건" in comp_item:
+                    items_list.append(f"{complementary_color} {comp_item}")
+                else:
+                    items_list.append(comp_item)
+            
             combinations.append({
                 "type": "단일 아이템 확장",
-                "items": [
-                    f"{single_item.get('class', item_type)}",
-                    self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))[0],
-                    self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))[1]
-                ],
-                "reason": f"현재 {single_item.get('class', item_type)}에 조화로운 아이템 추가"
+                "items": items_list,
+                "reason": f"현재 {item_display}에 조화로운 아이템 추가"
             })
         
         return combinations[:3]  # 최대 3개만

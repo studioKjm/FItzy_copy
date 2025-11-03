@@ -766,20 +766,28 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     else:
                         color_display = recommendations['mbti_style']['colors'][0]
                     
-                    item1 = f"{color_display} 상의"
-                    item2 = f"{recommendations['seasonal_info']['colors'][0]} 하의"
+                    # 구체적인 타입과 색상 포함
+                    top_type = "반팔 티셔츠" if temp >= 20 else "긴팔 셔츠"
+                    item1 = f"{color_display} {top_type}"
+                    bottom_color = recommendations['seasonal_info']['colors'][0]
+                    bottom_type = "바지"
+                    item2 = f"{bottom_color} {bottom_type}"
                     displayed_items = [item1, item2]
                     st.write(f"• {item1}")
                     st.write(f"• {item2}")
                 elif idx == 1:
-                    item1 = f"{recommendations['seasonal_info']['materials'][0]} 재킷"
-                    item2 = f"{recommendations['seasonal_info']['colors'][0]} 바지"
+                    jacket_color = recommendations['seasonal_info']['colors'][0] if recommendations['seasonal_info'].get('colors') else "검은색"
+                    item1 = f"{jacket_color} {recommendations['seasonal_info']['materials'][0]} 재킷"
+                    pants_color = "회색" if jacket_color == "검은색" else "베이지"
+                    item2 = f"{pants_color} 바지"
                     displayed_items = [item1, item2]
                     st.write(f"• {item1}")
                     st.write(f"• {item2}")
                 else:
-                    item1 = recommendations['weather_info']['accessories'][0]
-                    item2 = f"{recommendations['temperature_guidance']['material']} 재킷"
+                    accessory_color = recommendations['weather_info'].get('colors', ['검은색'])[0] if isinstance(recommendations['weather_info'].get('colors'), list) else "검은색"
+                    item1 = f"{accessory_color} {recommendations['weather_info']['accessories'][0]}"
+                    jacket_color = "검은색" if accessory_color == "흰색" else "회색"
+                    item2 = f"{jacket_color} {recommendations['temperature_guidance']['material']} 재킷"
                     displayed_items = [item1, item2]
                     st.write(f"• {item1}")
                     st.write(f"• {item2}")
