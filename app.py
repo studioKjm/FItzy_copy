@@ -10,7 +10,6 @@ from src.utils.recommendation_engine import RecommendationEngine
 from src.models.models import FashionRecommender
 from src.utils.model_manager import ModelManager
 from src.utils.visualization import draw_detections
-from src.utils.background_removal import remove_background
 from src.utils.body_analysis import BodyAnalyzer
 from src.utils.scoring_system import ScoringSystem
 from config import MBTI_STYLES
@@ -186,10 +185,7 @@ def handle_image_generation(outfit_desc, style, idx, recommendations, cache_key)
         
         # stable_diffusion만 사용
         if 'image_generator' not in st.session_state:
-            st.session_state.image_generator = OutfitImageGenerator(
-                method="stable_diffusion",
-                use_prototype=False
-            )
+            st.session_state.image_generator = OutfitImageGenerator(method="stable_diffusion")
         
         # enable_ai_images가 True이면 자동 생성으로 간주
         num_auto_images = st.session_state.get("num_auto_images", 1)
@@ -197,16 +193,24 @@ def handle_image_generation(outfit_desc, style, idx, recommendations, cache_key)
         
         if should_auto_generate:
             if cache_key not in st.session_state:
+                # 이미지 생성 전 placeholder 생성 (블러 처리)
+                image_placeholder = st.empty()
+                from PIL import Image as PILImage, ImageFilter
+                placeholder_img = PILImage.new('RGB', (512, 512), color=(240, 240, 240))
+                blurred_placeholder = placeholder_img.filter(ImageFilter.GaussianBlur(radius=10))
+                image_placeholder.image(blurred_placeholder, caption=f"{style} 스타일 AI 생성 이미지 (생성 중...)", width='stretch')
+                
                 with st.spinner(f"🎨 {style} 스타일 AI 이미지 생성 중... (10-30초 소요)"):
                     generated_image = st.session_state.image_generator.generate_outfit_image(
                         outfit_desc, style_info=recommendations
                     )
                     if generated_image:
                         st.session_state[cache_key] = generated_image
-                        st.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
+                        image_placeholder.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
                         st.success("✅ 이미지 생성 완료")
                         return True
                     else:
+                        image_placeholder.empty()
                         st.warning("⚠️ 이미지 생성 실패")
                         with st.expander("🔍 문제 해결 가이드", expanded=True):
                             show_image_generation_error_guide()
@@ -219,16 +223,24 @@ def handle_image_generation(outfit_desc, style, idx, recommendations, cache_key)
         else:
             gen_button_key = f"generate_image_{idx}"
             if st.button(f"🎨 {style} 스타일 이미지 생성", key=gen_button_key):
+                # 이미지 생성 전 placeholder (블러 처리)
+                image_placeholder = st.empty()
+                from PIL import Image as PILImage, ImageFilter
+                placeholder_img = PILImage.new('RGB', (512, 512), color=(240, 240, 240))
+                blurred_placeholder = placeholder_img.filter(ImageFilter.GaussianBlur(radius=10))
+                image_placeholder.image(blurred_placeholder, caption=f"{style} 스타일 AI 생성 이미지 (생성 중...)", width='stretch')
+                
                 with st.spinner(f"AI 이미지 생성 중... (10-30초 소요)"):
                     generated_image = st.session_state.image_generator.generate_outfit_image(
                         outfit_desc, style_info=recommendations
                     )
                     if generated_image:
                         st.session_state[cache_key] = generated_image
-                        st.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
+                        image_placeholder.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
                         st.success("✅ 이미지 생성 완료")
                         return True
                     else:
+                        image_placeholder.empty()
                         st.warning("⚠️ 이미지 생성 실패")
                         with st.expander("🔍 문제 해결 가이드", expanded=True):
                             show_image_generation_error_guide()
@@ -315,62 +327,9 @@ def main():
             # 이미지 로드
             image = Image.open(uploaded_file)
             
-            # 자동 배경 제거 시도
-            from src.utils.background_removal import REMBG_AVAILABLE
+            # 이미지 표시
+            st.image(image, caption="업로드된 이미지", width='stretch')
             processed_image = image
-            bg_removed = False
-            bg_error = None
-            
-            if REMBG_AVAILABLE:
-                with st.spinner("🎭 배경 제거 중..."):
-                    try:
-                        processed_image = remove_background(image)
-                        # 배경 제거 성공 여부 확인 (RGBA 모드면 성공)
-                        if processed_image.mode == 'RGBA':
-                            bg_removed = True
-                            # 알파 채널이 실제로 있는지 확인
-                            alpha = processed_image.split()[3]
-                            if alpha.getextrema()[0] < 255:  # 일부라도 투명하면 성공
-                                bg_removed = True
-                            else:
-                                # 모두 불투명하면 배경 제거 실패로 간주
-                                bg_removed = False
-                                bg_error = "배경 제거 결과가 모두 불투명합니다."
-                        else:
-                            # RGB 모드면 배경 제거 실패로 간주
-                            processed_image = image
-                            bg_removed = False
-                            bg_error = f"배경 제거 결과가 RGB 모드입니다 (예상: RGBA)"
-                    except Exception as e:
-                        # 에러 발생 시 원본 이미지 사용
-                        processed_image = image
-                        bg_removed = False
-                        bg_error = f"배경 제거 중 오류: {str(e)}"
-            else:
-                # rembg가 없으면 원본 이미지 사용
-                st.info("ℹ️ rembg 라이브러리가 없어 원본 이미지로 분석합니다. (`pip install rembg`로 설치 가능)")
-            
-            # 이미지 표시 (원본/배경제거 비교)
-            col_img1, col_img2 = st.columns(2)
-            with col_img1:
-                st.image(image, caption="원본 이미지", width='stretch')
-            with col_img2:
-                if bg_removed:
-                    st.image(processed_image, caption="배경 제거 이미지 ✅", width='stretch')
-                    st.success("배경 제거 성공!")
-                else:
-                    st.image(processed_image, caption="처리된 이미지 (원본 사용)", width='stretch')
-                    if REMBG_AVAILABLE and bg_error:
-                        with st.expander("🔍 배경 제거 오류 상세"):
-                            st.error(bg_error)
-                            st.info("""
-                            **해결 방법:**
-                            1. rembg 재설치: `pip uninstall rembg && pip install rembg`
-                            2. 모델 다운로드 확인: 첫 실행 시 모델이 자동 다운로드됩니다
-                            3. 인터넷 연결 확인: 모델 다운로드에 인터넷이 필요합니다
-                            """)
-                    elif REMBG_AVAILABLE:
-                        st.warning("⚠️ 배경 제거가 완전히 수행되지 않았습니다.")
             
             # 얼굴 및 체형 분석
             st.subheader("👤 얼굴 및 체형 분석")
@@ -397,8 +356,6 @@ def main():
                     st.success("✅ 얼굴 탐지됨")
                     st.write(f"**얼굴 형태:** {face_info.get('face_shape', '알 수 없음')}")
                     st.write(f"**눈 크기:** {face_info.get('eye_size', '알 수 없음')}")
-                    if face_info.get("face_ratio"):
-                        st.caption(f"얼굴 비율: {face_info.get('face_ratio', 0):.2f}")
                     
                     # DeepFace 분석 결과 표시
                     if face_info.get("age"):
@@ -429,8 +386,6 @@ def main():
                 if body_info.get("detected"):
                     st.success("✅ 체형 분석됨")
                     st.write(f"**체형:** {body_info.get('body_type', '알 수 없음')}")
-                    if body_info.get("body_ratio"):
-                        st.write(f"**체형 비율:** {body_info.get('body_ratio', 0):.2f}")
                 else:
                     st.warning("⚠️ 체형을 분석할 수 없습니다")
                     st.info(body_info.get("message", "전신 사진을 업로드해주세요."))
@@ -495,23 +450,16 @@ def main():
                 image=processed_image  # 이미지 전달 (향상된 분석용)
             )
             
-            # 점수 표시
-            st.subheader("📊 외모 및 패션 점수")
-            
-            col_score1, col_score2 = st.columns(2)
-            with col_score1:
-                st.markdown("### 👤 외모 점수")
-                display_score_metric("얼굴", appearance_scores['얼굴'])
-                display_score_metric("체형", appearance_scores['체형'])
-                display_score_metric("전체 외모", appearance_scores['전체 외모'])
-            
-            with col_score2:
-                st.markdown("### 👗 패션 점수")
-                display_score_metric("아이템 구성", fashion_scores['아이템 구성'])
-                display_score_metric("스타일 일치도", fashion_scores['스타일 일치도'])
-                display_score_metric("계절 적합성", fashion_scores['계절 적합성'])
-                display_score_metric("날씨 적합성", fashion_scores['날씨 적합성'])
-                display_score_metric("전체 패션", fashion_scores['전체 패션'])
+            # 점수 표시 (접힌 상태로)
+            with st.expander("📊 외모 및 패션 점수", expanded=False):
+                col_score1, col_score2 = st.columns(2)
+                with col_score1:
+                    st.markdown("### 👤 외모 점수")
+                    display_score_metric("전체 외모", appearance_scores['전체 외모'])
+                
+                with col_score2:
+                    st.markdown("### 👗 패션 점수")
+                    display_score_metric("전체 패션", fashion_scores['전체 패션'])
             
             # 상세 피드백
             feedback = st.session_state.scoring_system.get_detailed_feedback(appearance_scores, fashion_scores, season)
@@ -720,8 +668,11 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     if color_suggestions:
         top_colors = sorted(color_suggestions.items(), key=lambda x: x[1], reverse=True)[:3]
     
+    # 3가지 버전의 설명 생성 (항상 3개 보장)
     outfit_descriptions = []
-    for idx, style in enumerate(outfit_styles):
+    for idx in range(3):  # 항상 3개 생성
+        style = outfit_styles[idx] if idx < len(outfit_styles) else "캐주얼"
+        
         if has_image_based and idx < len(image_based_combinations):
             # 이미지 기반 조합 우선 사용
             combo = image_based_combinations[idx]

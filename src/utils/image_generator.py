@@ -13,14 +13,12 @@ from diffusers import StableDiffusionPipeline
 class OutfitImageGenerator:
     """추천 코디 AI 이미지 생성 클래스 - 간소화 버전"""
     
-    def __init__(self, method: str = "stable_diffusion", use_prototype: bool = False):
+    def __init__(self, method: str = "stable_diffusion"):
         """
         Args:
             method: 이미지 생성 방법 (현재는 "stable_diffusion"만 지원)
-            use_prototype: 프로토타입 사용 여부 (현재 미지원)
         """
         self.method = method
-        self.use_prototype = False  # 프로토타입 기능 비활성화
         
         # MPS 사용 가능 여부 확인
         if not (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()):
@@ -115,8 +113,12 @@ class OutfitImageGenerator:
         }
         style_en = style_keywords.get(style, "casual style")
         
-        # 프롬프트 구성
-        prompt = f"{gender_keyword}, {items_text}, {style_en}, neck down only, no head, no face, full body, legs visible, exact colors, high quality, fashion photography, neutral background"
+        # 프롬프트 구성 (CLIP 77 토큰 제한 준수, 핵심만)
+        prompt = (
+            f"headless mannequin, no face, neck to feet, "
+            f"{gender_keyword} wearing {items_text}, "
+            f"{style_en}, exact colors, full body, white background"
+        )
         
         return prompt
     
@@ -126,7 +128,10 @@ class OutfitImageGenerator:
             self._load_pipeline()
             
             prompt = self._build_prompt(outfit_description)
-            negative_prompt = "face, head, facial features, wrong colors, color mismatch, blurry, watermark, low quality, worst quality, ugly, deformed, bad anatomy, bad proportions, text, error"
+            negative_prompt = (
+                "face, head, portrait, hair, wrong colors, color mismatch, "
+                "blurry, low quality, deformed, cropped body, text"
+            )
             
             print(f"이미지 생성 중... 프롬프트: {prompt[:80]}...")
             print(f"⏳ 생성 시간: 약 15-30초")
@@ -250,11 +255,12 @@ class OutfitImageGenerator:
                         negative_prompt_embeds = negative_prompt_embeds.to(self.device, non_blocking=False)
                     
                     # pipe() 호출 시 prompt_embeds 사용
+                    # guidance_scale 높여서 프롬프트 정확도 향상 (7.5 -> 9.5)
                     result = self.pipe(
                         prompt_embeds=prompt_embeds,
                         negative_prompt_embeds=negative_prompt_embeds,
-                        num_inference_steps=15,
-                        guidance_scale=7.5,
+                        num_inference_steps=20,  # 15 -> 20 (정확도 향상)
+                        guidance_scale=9.5,  # 프롬프트 준수도 향상
                         height=512,
                         width=512,
                         generator=None
