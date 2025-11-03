@@ -6,34 +6,16 @@
 import numpy as np
 from PIL import Image
 
-# 향상된 점수 계산 시스템 임포트 (선택적)
-try:
-    from src.utils.enhanced_scoring import EnhancedScoringSystem
-    ENHANCED_SCORING_AVAILABLE = True
-except ImportError:
-    ENHANCED_SCORING_AVAILABLE = False
-
-
 class ScoringSystem:
     """외모 및 패션 점수 평가 시스템"""
     
     def __init__(self):
-        # 향상된 점수 계산 시스템 초기화 (선택적)
-        if ENHANCED_SCORING_AVAILABLE:
-            try:
-                self.enhanced_scorer = EnhancedScoringSystem()
-                self.use_enhanced = True
-            except Exception:
-                self.enhanced_scorer = None
-                self.use_enhanced = False
-        else:
-            self.enhanced_scorer = None
-            self.use_enhanced = False
+        pass
     
     def score_appearance(self, face_info: dict, body_info: dict, image: Image.Image = None) -> dict:
-        """외모 점수 평가 (향상된 시스템 우선 사용)"""
-        # 향상된 점수 계산 시스템 사용
-        if self.use_enhanced and self.enhanced_scorer:
+        """외모 점수 평가"""
+        # 기본 점수 계산
+        if False:  # enhanced_scorer 비활성화
             try:
                 return self.enhanced_scorer.calculate_enhanced_appearance_score(
                     face_info, body_info, image
@@ -157,9 +139,9 @@ class ScoringSystem:
     def score_fashion(self, detected_items: list, style_analysis: dict, 
                      weather: str, season: str, temperature: float = None,
                      image: Image.Image = None) -> dict:
-        """패션 점수 평가 (향상된 시스템 우선 사용)"""
-        # 향상된 점수 계산 시스템 사용
-        if self.use_enhanced and self.enhanced_scorer:
+        """패션 점수 평가"""
+        # 기본 점수 계산
+        if False:  # enhanced_scorer 비활성화
             try:
                 return self.enhanced_scorer.calculate_enhanced_fashion_score(
                     detected_items, style_analysis, weather, season, temperature, image

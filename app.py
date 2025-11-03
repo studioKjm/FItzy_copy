@@ -702,15 +702,13 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     base_desc += f", {top_colors[0][0]} 톤 추천"
             outfit_descriptions.append(base_desc)
     
+    # 먼저 3가지 코디를 모두 텍스트로 표시 (이미지 생성은 나중에)
+    outfit_data_list = []  # 이미지 생성용 데이터 저장
+    
     for idx, (col, style, desc) in enumerate(zip([col1, col2, col3], outfit_styles, outfit_descriptions)):
         with col:
             st.write(f"**추천 코디 {idx+1}**")
             st.write(f"**{style} 스타일**")
-            
-            # CLIP 점수 표시 (있는 경우)
-            if style_matches and style in style_matches:
-                score = style_matches[style]
-                st.caption(f"📊 이미지 분석 점수: {score:.2f}")
             
             st.info(desc)
             st.write(f"**아이템:**")
@@ -733,7 +731,7 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
             for p in products:
                 st.write(f"• {p}")
             
-            # AI 생성 이미지 (자동 생성 또는 버튼)
+            # 이미지 생성용 데이터 저장 (나중에 생성)
             if 'enable_ai_images' in st.session_state and st.session_state.enable_ai_images:
                 outfit_desc = {
                     "items": displayed_items,
@@ -743,7 +741,13 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                 }
                 current_image_hash = st.session_state.get("last_image_hash", "default")
                 cache_key = f"generated_image_{current_image_hash}_{style}_{idx}"
-                handle_image_generation(outfit_desc, style, idx, recommendations, cache_key)
+                outfit_data_list.append({
+                    "col": col,
+                    "outfit_desc": outfit_desc,
+                    "style": style,
+                    "idx": idx,
+                    "cache_key": cache_key
+                })
             
             # 탐지된 아이템과 조화로운 아이템 표시
             if image_suggestions and image_suggestions.get("detected_items_info"):
@@ -754,32 +758,17 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     if complementary:
                         st.caption(f"💡 현재 {item['item']}와 조화: {', '.join(complementary[:2])}")
     
-    # 이미지 기반 추천 상세 정보 (있는 경우)
-    if image_suggestions and (image_suggestions.get("detected_items_info") or image_suggestions.get("style_matches")):
-        with st.expander("🖼️ 이미지 분석 기반 추천 상세", expanded=False):
-            if image_suggestions.get("detected_items_info"):
-                st.markdown("**탐지된 아이템:**")
-                for item_info in image_suggestions["detected_items_info"][:3]:
-                    item_name = item_info.get("item", "")
-                    confidence = item_info.get("confidence", 0)
-                    complementary = item_info.get("complementary_items", [])
-                    st.write(f"• **{item_name}** (신뢰도: {confidence:.2f})")
-                    if complementary:
-                        st.caption(f"  → 조화로운 아이템: {', '.join(complementary)}")
-            
-            if image_suggestions.get("style_matches"):
-                st.markdown("**CLIP 스타일 분석:**")
-                sorted_styles = sorted(image_suggestions["style_matches"].items(), 
-                                     key=lambda x: x[1], reverse=True)
-                for style_name, score in sorted_styles[:5]:
-                    st.write(f"• {style_name}: {score:.3f}")
-            
-            if image_suggestions.get("color_matches"):
-                st.markdown("**CLIP 색상 분석:**")
-                sorted_colors = sorted(image_suggestions["color_matches"].items(), 
-                                     key=lambda x: x[1], reverse=True)
-                for color_name, score in sorted_colors[:5]:
-                    st.write(f"• {color_name}: {score:.3f}")
+    # 모든 코디 텍스트 출력 완료 후 이미지 생성
+    if outfit_data_list:
+        for data in outfit_data_list:
+            with data["col"]:
+                handle_image_generation(
+                    data["outfit_desc"], 
+                    data["style"], 
+                    data["idx"], 
+                    recommendations, 
+                    data["cache_key"]
+                )
     
     # 추천 이유
     st.subheader("💡 이 조합이 어울리는 이유")
