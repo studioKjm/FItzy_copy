@@ -12,6 +12,7 @@ from src.utils.model_manager import ModelManager
 from src.utils.visualization import draw_detections
 from src.utils.body_analysis import BodyAnalyzer
 from src.utils.scoring_system import ScoringSystem
+from src.utils.virtual_fitting import VirtualFittingSystem
 from config import MBTI_STYLES
 
 # 전역 변수로 추천 엔진 초기화
@@ -25,6 +26,11 @@ if 'body_analyzer' not in st.session_state:
     st.session_state.body_analyzer = BodyAnalyzer()
 if 'scoring_system' not in st.session_state:
     st.session_state.scoring_system = ScoringSystem()
+if 'virtual_fitting' not in st.session_state:
+    st.session_state.virtual_fitting = VirtualFittingSystem(
+        st.session_state.fashion_recommender.detector,
+        st.session_state.fashion_recommender.analyzer
+    )
 
 def detect_gender_from_image(image, clip_analyzer, result=None):
     """이미지에서 성별 인식 (의상 기반 + CLIP 조합 - 개선)"""
@@ -261,9 +267,14 @@ def main():
     with st.sidebar:
         st.title("⚙️ 설정")
         
-        # MBTI 선택
-        mbti_type = st.selectbox("MBTI 유형", 
-                                ["ENFP", "ISTJ", "ESFP", "INTJ", "기타"])
+        # MBTI 선택 (모든 16가지 타입)
+        mbti_options = [
+            "ENFP", "ENTP", "ESFP", "ESTP",
+            "ENFJ", "ENTJ", "ESFJ", "ESTJ",
+            "INFP", "INFJ", "ISFP", "ISTP",
+            "INTP", "INTJ", "ISFJ", "ISTJ"
+        ]
+        mbti_type = st.selectbox("MBTI 유형", mbti_options, index=0)
         
         # 성별 선택 (자동 인식 기능)
         gender = render_gender_selector()
@@ -274,26 +285,40 @@ def main():
         # AI 이미지 생성 설정 (선택적)
         with st.expander("🎨 AI 이미지 생성 설정", expanded=False):
             # 초기화 (한 번만)
+            if 'fitting_mode' not in st.session_state:
+                st.session_state.fitting_mode = "가상 피팅 (추천)"
             if 'enable_ai_images' not in st.session_state:
-                st.session_state.enable_ai_images = True
+                st.session_state.enable_ai_images = False  # 기본 비활성화
             if 'num_auto_images' not in st.session_state:
                 st.session_state.num_auto_images = 1
             
-            # 통합된 토글 (활성화 시 자동 생성 포함)
-            enable_ai_images = st.toggle(
-                "AI 이미지 생성 활성화 (자동 생성 포함)", 
-                key="enable_ai_images"
+            # 가상 피팅 모드 선택
+            st.radio(
+                "이미지 생성 방식",
+                ["가상 피팅 (추천)", "AI 생성 (실험적)"],
+                key="fitting_mode",
+                help="가상 피팅: 업로드한 이미지에 추천 코디 합성 (빠르고 정확)\nAI 생성: Stable Diffusion (느리고 부정확할 수 있음)"
             )
             
-            if enable_ai_images:
-                # 생성할 이미지 개수 선택
-                num_auto_images = st.slider(
-                    "자동 생성할 이미지 개수 (추천 코디 중)",
-                    min_value=1,
-                    max_value=3,
-                    key="num_auto_images",
-                    help="추천 코디 3개 중 몇 개의 이미지를 자동 생성할지 선택"
+            if st.session_state.get("fitting_mode") == "AI 생성 (실험적)":
+                enable_ai_images = st.toggle(
+                    "⚠️ AI 이미지 생성 (실험적, 부정확할 수 있음)", 
+                    key="enable_ai_images"
                 )
+                
+                if enable_ai_images:
+                    st.warning("⚠️ AI 생성 이미지는 색상/아이템이 부정확할 수 있습니다.")
+                    # 생성할 이미지 개수 선택
+                    num_auto_images = st.slider(
+                        "자동 생성할 이미지 개수 (추천 코디 중)",
+                        min_value=1,
+                        max_value=3,
+                        key="num_auto_images",
+                        help="추천 코디 3개 중 몇 개의 이미지를 자동 생성할지 선택"
+                    )
+            else:
+                # 가상 피팅 모드
+                st.success("✅ 가상 피팅 모드 (업로드 이미지에 추천 코디 합성)")
 
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
@@ -390,10 +415,13 @@ def main():
                     st.warning("⚠️ 체형을 분석할 수 없습니다")
                     st.info(body_info.get("message", "전신 사진을 업로드해주세요."))
             
-            # 코디 추천 결과 표시 (배경 제거 이미지 사용, 얼굴/체형 정보 포함)
+            # 코디 추천 결과 표시 (원본 이미지 사용, 얼굴/체형 정보 포함)
             # 먼저 YOLO/CLIP 분석 실행 (점수 계산을 위해)
             fr = st.session_state.fashion_recommender
             result = fr.recommend_outfit(processed_image, mbti_type, temperature, weather, season)
+            
+            # 가상 피팅용 원본 이미지 저장
+            user_uploaded_image = image
             
             # 성별 자동 인식 (얼굴 특징 기반 + DeepFace + 의상 기반 + CLIP)
             gender_changed = False
@@ -468,11 +496,12 @@ def main():
                     for fb in feedback:
                         st.write(fb)
             
-            # 코디 추천 결과 표시
+            # 코디 추천 결과 표시 (가상 피팅용 원본 이미지 전달)
             display_outfit_recommendations(
                 processed_image, mbti_type, temperature, weather, season, 
                 gender, debug_mode, face_info, body_info, original_image=image,
-                precomputed_result=result, appearance_scores=appearance_scores, fashion_scores=fashion_scores
+                precomputed_result=result, appearance_scores=appearance_scores, fashion_scores=fashion_scores,
+                user_uploaded_image=user_uploaded_image
             )
     
     with tab2:
@@ -516,7 +545,8 @@ def main():
 
 def display_outfit_recommendations(image, mbti, temp, weather, season, gender, debug_mode=False, 
                                    face_info=None, body_info=None, original_image=None,
-                                   precomputed_result=None, appearance_scores=None, fashion_scores=None):
+                                   precomputed_result=None, appearance_scores=None, fashion_scores=None,
+                                   user_uploaded_image=None):
     """코디 추천 결과 표시"""
     # 통합 추천 + 탐지/분석 실행 (이미 계산된 경우 재사용)
     if precomputed_result is None:
@@ -529,11 +559,22 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     detected_items_data = result.get("detected_items", {})
     style_analysis_data = result.get("style_analysis", {})
     
+    # 통합 추천 생성 (성별 + MBTI + 이미지 분석 + 온도/계절 → 스타일 → 아이템 → 제품)
+    unified_recommendations = st.session_state.recommendation_engine.generate_unified_outfit_recommendations(
+        gender, mbti, temp, weather, season,
+        detected_items=detected_items_data.get("items", []),
+        style_analysis=style_analysis_data
+    )
+    
+    # 기존 호환성 유지용
     recommendations = st.session_state.recommendation_engine.get_personalized_recommendation(
         mbti, temp, weather, season,
         detected_items=detected_items_data.get("items", []),
         style_analysis=style_analysis_data
     )
+    
+    # 통합 추천 결과를 기존 recommendations에 병합
+    recommendations["outfit_versions"] = unified_recommendations["outfit_versions"]
 
     # 진단 모드: YOLO/CLIP 상세 출력
     if debug_mode:
@@ -629,110 +670,124 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     
     st.subheader("🎯 추천 코디 (3가지 버전)")
     
-    # 이미지 분석 결과 기반 동적 스타일 선택
+    # 통합 추천 결과 사용
+    outfit_versions = recommendations.get("outfit_versions", [])
     image_suggestions = recommendations.get("image_suggestions", {})
-    style_matches = image_suggestions.get("style_matches", {})
-    image_based_combinations = image_suggestions.get("recommendation_based_on_image", [])
-    
-    # CLIP 스타일 점수 기반으로 스타일 순서 결정
-    if style_matches:
-        # 점수가 높은 순으로 정렬
-        sorted_styles = sorted(style_matches.items(), key=lambda x: x[1], reverse=True)
-        top_styles = [style[0] for style in sorted_styles[:3]]
-        
-        # 기본 스타일과 결합 (고정된 3개가 아닌 동적 선택)
-        outfit_styles_list = []
-        for style in ["캐주얼", "포멀", "트렌디"]:
-            if style in top_styles:
-                outfit_styles_list.append(style)
-        
-        # 부족하면 기본 스타일로 채움
-        for style in ["캐주얼", "포멀", "트렌디"]:
-            if len(outfit_styles_list) < 3 and style not in outfit_styles_list:
-                outfit_styles_list.append(style)
-        
-        outfit_styles = outfit_styles_list[:3]
-    else:
-        outfit_styles = ["캐주얼", "포멀", "트렌디"]
-    
-    # 이미지 기반 조합이 있으면 우선 사용
-    has_image_based = len(image_based_combinations) > 0
     
     # 3가지 버전 코디 추천
     col1, col2, col3 = st.columns(3)
     
-    # 각 버전별 설명 생성 (이미지 분석 결과 반영)
-    # 색상 추천 추출 (CLIP 분석 결과 활용)
-    color_suggestions = image_suggestions.get("color_matches", {})
-    top_colors = []
-    if color_suggestions:
-        top_colors = sorted(color_suggestions.items(), key=lambda x: x[1], reverse=True)[:3]
+    # 통합 추천이 있는 경우 사용
+    outfit_data_list = []
     
-    # 3가지 버전의 설명 생성 (항상 3개 보장)
-    outfit_descriptions = []
-    for idx in range(3):  # 항상 3개 생성
-        style = outfit_styles[idx] if idx < len(outfit_styles) else "캐주얼"
+    if outfit_versions and len(outfit_versions) >= 3:
+        # 통합 추천 사용 (성별 + MBTI + 이미지 분석 + 온도/계절)
+        for idx, (col, version) in enumerate(zip([col1, col2, col3], outfit_versions[:3])):
+            with col:
+                st.write(f"**추천 코디 {idx+1}**")
+                st.write(f"**{version['style']}**")
+                
+                st.info(version['description'])
+                st.write(f"**아이템:**")
+                
+                # 아이템 표시
+                for item in version['items']:
+                    st.write(f"• {item}")
+                
+                # 추천 제품 표시
+                st.write("**추천 제품:**")
+                for product in version['products']:
+                    st.write(f"• {product}")
+                
+                # 가상 피팅/AI 생성용 데이터 저장
+                outfit_desc = {
+                    "items": version['items'],
+                    "style": version['style'],
+                    "colors": [item.split()[0] for item in version['items'] if item.split()[0] in ["검은색", "흰색", "빨간색", "파란색", "회색", "베이지", "네이비"]][:2],
+                    "gender": version['gender']
+                }
+                current_image_hash = st.session_state.get("last_image_hash", "default")
+                cache_key = f"generated_image_{current_image_hash}_{version['style']}_{idx}"
+                outfit_data_list.append({
+                    "col": col,
+                    "outfit_desc": outfit_desc,
+                    "style": version['style'],
+                    "idx": idx,
+                    "cache_key": cache_key
+                })
+    else:
+        # 기존 방식 (하위 호환성)
+        style_matches = image_suggestions.get("style_matches", {})
+        image_based_combinations = image_suggestions.get("recommendation_based_on_image", [])
         
-        if has_image_based and idx < len(image_based_combinations):
-            # 이미지 기반 조합 우선 사용
-            combo = image_based_combinations[idx]
-            reason = combo.get("reason", f"{style} 스타일")
-            # 색상 추천 추가
-            if top_colors and idx < len(top_colors):
-                color_name = top_colors[idx][0]
-                reason += f", {color_name} 톤 추천"
-            outfit_descriptions.append(reason)
+        if style_matches:
+            sorted_styles = sorted(style_matches.items(), key=lambda x: x[1], reverse=True)
+            top_styles = [style[0] for style in sorted_styles[:3]]
+            outfit_styles_list = []
+            for style in ["캐주얼", "포멀", "트렌디"]:
+                if style in top_styles:
+                    outfit_styles_list.append(style)
+            for style in ["캐주얼", "포멀", "트렌디"]:
+                if len(outfit_styles_list) < 3 and style not in outfit_styles_list:
+                    outfit_styles_list.append(style)
+            outfit_styles = outfit_styles_list[:3]
         else:
-            # 기존 방식 (MBTI/계절/날씨 기반) + 색상 추천
-            base_desc = ""
-            if idx == 0:
-                base_desc = f"{recommendations['mbti_style']['style']} 스타일"
-                # MBTI 색상 추가
-                if recommendations['mbti_style'].get('colors'):
-                    base_desc += f", {recommendations['mbti_style']['colors'][0]} 톤"
-            elif idx == 1:
-                base_desc = f"{recommendations['seasonal_info']['mood']}한 {recommendations['seasonal_info']['materials'][0]} 소재"
-                # 계절 색상 추가
-                if recommendations['seasonal_info'].get('colors'):
-                    base_desc += f", {recommendations['seasonal_info']['colors'][0]} 톤"
+            outfit_styles = ["캐주얼", "포멀", "트렌디"]
+        
+        has_image_based = len(image_based_combinations) > 0
+        color_suggestions = image_suggestions.get("color_matches", {})
+        top_colors = []
+        if color_suggestions:
+            top_colors = sorted(color_suggestions.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        outfit_descriptions = []
+        for idx in range(3):
+            style = outfit_styles[idx] if idx < len(outfit_styles) else "캐주얼"
+            if has_image_based and idx < len(image_based_combinations):
+                combo = image_based_combinations[idx]
+                reason = combo.get("reason", f"{style} 스타일")
+                if top_colors and idx < len(top_colors):
+                    reason += f", {top_colors[idx][0]} 톤 추천"
+                outfit_descriptions.append(reason)
             else:
-                base_desc = f"{recommendations['weather_info']['mood']}한 스타일"
-                # 이미지 분석 색상 추가 (있는 경우)
-                if top_colors:
-                    base_desc += f", {top_colors[0][0]} 톤 추천"
-            outfit_descriptions.append(base_desc)
-    
-    # 먼저 3가지 코디를 모두 텍스트로 표시 (이미지 생성은 나중에)
-    outfit_data_list = []  # 이미지 생성용 데이터 저장
-    
-    for idx, (col, style, desc) in enumerate(zip([col1, col2, col3], outfit_styles, outfit_descriptions)):
-        with col:
-            st.write(f"**추천 코디 {idx+1}**")
-            st.write(f"**{style} 스타일**")
-            
-            st.info(desc)
-            st.write(f"**아이템:**")
-            
-            # 표시될 아이템 텍스트 수집 및 표시
-            color_display = None
-            if idx == 0:
-                detected_colors = image_suggestions.get("color_matches", {})
-                if detected_colors:
-                    color_display = max(detected_colors.items(), key=lambda x: x[1])[0]
-            
-            displayed_items = render_outfit_items_display(
-                idx, recommendations, image_suggestions, has_image_based, 
-                image_based_combinations, temp, gender
-            )
-            
-            # 구체 제품 추천
-            products = st.session_state.recommendation_engine.recommend_products(style, gender)
-            st.write("**추천 제품:**")
-            for p in products:
-                st.write(f"• {p}")
-            
-            # 이미지 생성용 데이터 저장 (나중에 생성)
-            if 'enable_ai_images' in st.session_state and st.session_state.enable_ai_images:
+                base_desc = ""
+                if idx == 0:
+                    base_desc = f"{recommendations['mbti_style']['style']} 스타일"
+                    if recommendations['mbti_style'].get('colors'):
+                        base_desc += f", {recommendations['mbti_style']['colors'][0]} 톤"
+                elif idx == 1:
+                    base_desc = f"{recommendations['seasonal_info']['mood']}한 {recommendations['seasonal_info']['materials'][0]} 소재"
+                    if recommendations['seasonal_info'].get('colors'):
+                        base_desc += f", {recommendations['seasonal_info']['colors'][0]} 톤"
+                else:
+                    base_desc = f"{recommendations['weather_info']['mood']}한 스타일"
+                    if top_colors:
+                        base_desc += f", {top_colors[0][0]} 톤 추천"
+                outfit_descriptions.append(base_desc)
+        
+        for idx, (col, style, desc) in enumerate(zip([col1, col2, col3], outfit_styles, outfit_descriptions)):
+            with col:
+                st.write(f"**추천 코디 {idx+1}**")
+                st.write(f"**{style} 스타일**")
+                st.info(desc)
+                st.write(f"**아이템:**")
+                
+                color_display = None
+                if idx == 0:
+                    detected_colors = image_suggestions.get("color_matches", {})
+                    if detected_colors:
+                        color_display = max(detected_colors.items(), key=lambda x: x[1])[0]
+                
+                displayed_items = render_outfit_items_display(
+                    idx, recommendations, image_suggestions, has_image_based, 
+                    image_based_combinations, temp, gender
+                )
+                
+                products = st.session_state.recommendation_engine.recommend_products(style, gender)
+                st.write("**추천 제품:**")
+                for p in products:
+                    st.write(f"• {p}")
+                
                 outfit_desc = {
                     "items": displayed_items,
                     "style": style,
@@ -748,27 +803,54 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     "idx": idx,
                     "cache_key": cache_key
                 })
-            
-            # 탐지된 아이템과 조화로운 아이템 표시
-            if image_suggestions and image_suggestions.get("detected_items_info"):
-                detected_info = image_suggestions["detected_items_info"]
-                if detected_info and idx == 0:  # 첫 번째 버전에만 표시
-                    item = detected_info[0]
-                    complementary = item.get("complementary_items", [])
-                    if complementary:
-                        st.caption(f"💡 현재 {item['item']}와 조화: {', '.join(complementary[:2])}")
     
-    # 모든 코디 텍스트 출력 완료 후 이미지 생성
+    # 모든 코디 텍스트 출력 완료 후 이미지 생성/합성
     if outfit_data_list:
-        for data in outfit_data_list:
-            with data["col"]:
-                handle_image_generation(
-                    data["outfit_desc"], 
-                    data["style"], 
-                    data["idx"], 
-                    recommendations, 
-                    data["cache_key"]
-                )
+        fitting_mode = st.session_state.get("fitting_mode", "가상 피팅 (추천)")
+        
+        # 디버깅 정보
+        print(f"DEBUG: outfit_data_list 길이: {len(outfit_data_list)}")
+        print(f"DEBUG: fitting_mode: {fitting_mode}")
+        
+        if fitting_mode == "가상 피팅 (추천)":
+            # 가상 피팅 모드: 업로드 이미지에 코디 합성
+            for data in outfit_data_list:
+                with data["col"]:
+                    # 캐시 확인
+                    cache_key = f"virtual_fitting_{data['cache_key']}"
+                    
+                    if cache_key not in st.session_state:
+                        with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
+                            # 원본 이미지 사용 (user_uploaded_image 또는 image)
+                            source_image = user_uploaded_image if user_uploaded_image is not None else image
+                            fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
+                                source_image,
+                                data["outfit_desc"]["items"],
+                                data["outfit_desc"]["gender"]
+                            )
+                            
+                            if fitted_image:
+                                st.session_state[cache_key] = fitted_image
+                                st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                                st.success("✅ 가상 피팅 완료")
+                            else:
+                                st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                    else:
+                        # 캐시된 이미지 사용
+                        cached_image = st.session_state[cache_key]
+                        st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                        st.success("✅ 가상 피팅 완료 (캐시)")
+        else:
+            # AI 생성 모드
+            for data in outfit_data_list:
+                with data["col"]:
+                    handle_image_generation(
+                        data["outfit_desc"], 
+                        data["style"], 
+                        data["idx"], 
+                        recommendations, 
+                        data["cache_key"]
+                    )
     
     # 추천 이유
     st.subheader("💡 이 조합이 어울리는 이유")

@@ -35,17 +35,33 @@ class OutfitImageGenerator:
             return
         
         print("🍎 Apple Silicon (M1/M2) 감지 - MPS 백엔드 사용 (GPU 가속)")
-        print("Stable Diffusion 모델 로드 중... (장치: mps, 모델: CompVis/stable-diffusion-v1-4)")
-        print("⏳ 처음 실행 시 모델 다운로드가 필요합니다 (약 4GB, 몇 분 소요)")
+        print("⚡ Stable Diffusion 2.1 모델 로드 중... (SD 1.4보다 개선된 버전)")
+        print("⏳ 처음 실행 시 모델 다운로드가 필요합니다 (약 5GB, 몇 분 소요)")
         
-        # 모델 로드
-        self.pipe = StableDiffusionPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4",
-            torch_dtype=torch.float32,
-            safety_checker=None,
-            requires_safety_checker=False,
-            device_map=None
-        )
+        try:
+            # Stable Diffusion 2.1: SD 1.4보다 개선, 메모리 효율적
+            print("📦 Stable Diffusion 2.1 시도 중... (SD 1.4보다 개선)")
+            self.pipe = StableDiffusionPipeline.from_pretrained(
+                "stabilityai/stable-diffusion-2-1",
+                torch_dtype=torch.float32,
+                safety_checker=None,
+                requires_safety_checker=False,
+                device_map=None
+            )
+            print("✅ Stable Diffusion 2.1 모델 로드 성공!")
+        except Exception as e:
+            print(f"⚠️ SD 2.1 로드 실패: {e}")
+            print("📦 Stable Diffusion v1.4로 폴백...")
+            
+            # 폴백: SD 1.4
+            self.pipe = StableDiffusionPipeline.from_pretrained(
+                "CompVis/stable-diffusion-v1-4",
+                torch_dtype=torch.float32,
+                safety_checker=None,
+                requires_safety_checker=False,
+                device_map=None
+            )
+            print("✅ SD 1.4 모델 로드 완료")
         
         # 컴포넌트별 장치 배치
         self.pipe.vae = self.pipe.vae.to(self.vae_device, non_blocking=False)
@@ -63,14 +79,13 @@ class OutfitImageGenerator:
         print("✅ 모델 로드 완료")
     
     def _build_prompt(self, outfit_description: Dict) -> str:
-        """효과적인 프롬프트 생성"""
+        """효과적인 프롬프트 생성 (간결하고 명확하게)"""
         items = outfit_description.get("items", [])
         style = outfit_description.get("style", "캐주얼")
         gender = outfit_description.get("gender", "공용")
         
-        # 성별 키워드
-        gender_keyword = "male model, man" if gender == "남성" else \
-                        "female model, woman" if gender == "여성" else "model"
+        # 성별 키워드 (간결)
+        gender_keyword = "man" if gender == "남성" else "woman" if gender == "여성" else "person"
         
         # 색상/타입 변환
         color_map = {
@@ -80,11 +95,12 @@ class OutfitImageGenerator:
             "네이비": "navy", "오렌지": "orange", "파스텔": "pastel"
         }
         
+        # 아이템을 최대 2개로 제한 (정확도 향상)
         processed_items = []
-        for item in items[:3]:
+        for item in items[:2]:  # 3개 -> 2개로 제한
             # 브랜드명 제거
             for brand in ["유니클로", "리바이스", "컨버스", "나이키", "아디다스", "자라", "H&M", 
-                         "uniqlo", "levis", "converse", "nike", "adidas", "zara", "u ", "U "]:
+                         "uniqlo", "levis", "converse", "nike", "adidas", "zara"]:
                 item = item.replace(brand, "").strip()
             
             # 색상 영어 변환
@@ -95,7 +111,7 @@ class OutfitImageGenerator:
             # 타입 영어 변환
             item = item.replace("반팔", "short sleeve").replace("긴팔", "long sleeve")
             item = item.replace("티셔츠", "t-shirt").replace("셔츠", "shirt")
-            item = item.replace("바지", "long pants").replace("반바지", "shorts")
+            item = item.replace("바지", "pants").replace("반바지", "shorts")
             item = item.replace("재킷", "jacket").replace("가디건", "cardigan")
             item = item.replace("부츠", "boots").replace("스니커즈", "sneakers")
             item = " ".join(item.split())
@@ -103,22 +119,28 @@ class OutfitImageGenerator:
             if item:
                 processed_items.append(item)
         
-        items_text = ", ".join(processed_items) if processed_items else "fashion outfit"
+        # 아이템을 간결하게 표현
+        if len(processed_items) >= 2:
+            items_text = f"{processed_items[0]}, {processed_items[1]}"
+        elif len(processed_items) == 1:
+            items_text = processed_items[0]
+        else:
+            items_text = "casual outfit"
         
-        # 스타일 키워드
-        style_keywords = {
-            "캐주얼": "casual style",
-            "포멀": "formal elegant style",
-            "트렌디": "trendy modern style"
-        }
-        style_en = style_keywords.get(style, "casual style")
-        
-        # 프롬프트 구성 (CLIP 77 토큰 제한 준수, 핵심만)
-        prompt = (
-            f"headless mannequin, no face, neck to feet, "
-            f"{gender_keyword} wearing {items_text}, "
-            f"{style_en}, exact colors, full body, white background"
-        )
+        # 색상 정확도 최우선 프롬프트 (UPPERCASE 강조)
+        if len(processed_items) >= 2:
+            # 각 아이템의 색상을 UPPERCASE로 강조
+            item1_upper = processed_items[0].upper()
+            item2_upper = processed_items[1].upper()
+            prompt = (
+                f"one single mannequin only, {item1_upper}, "
+                f"{item2_upper}, EXACT COLORS, product photo, centered"
+            )
+        elif len(processed_items) == 1:
+            item_upper = processed_items[0].upper()
+            prompt = f"single mannequin wearing {item_upper}, EXACT COLOR, product photo"
+        else:
+            prompt = "single mannequin with clothing"
         
         return prompt
     
@@ -128,9 +150,12 @@ class OutfitImageGenerator:
             self._load_pipeline()
             
             prompt = self._build_prompt(outfit_description)
+            # 매우 강력한 negative prompt (얼굴 제거 + 여러 마네킹 제거 + 색상 혼동 방지)
             negative_prompt = (
-                "face, head, portrait, hair, wrong colors, color mismatch, "
-                "blurry, low quality, deformed, cropped body, text"
+                "face, head, eyes, nose, mouth, lips, hair, neck, portrait, person, human face, "
+                "multiple people, multiple mannequins, two mannequins, crowd, group, "
+                "wrong colors, incorrect colors, color swap, reversed colors, "
+                "white pants, shorts, blurry, low quality"
             )
             
             print(f"이미지 생성 중... 프롬프트: {prompt[:80]}...")
@@ -255,20 +280,51 @@ class OutfitImageGenerator:
                         negative_prompt_embeds = negative_prompt_embeds.to(self.device, non_blocking=False)
                     
                     # pipe() 호출 시 prompt_embeds 사용
-                    # guidance_scale 높여서 프롬프트 정확도 향상 (7.5 -> 9.5)
-                    result = self.pipe(
-                        prompt_embeds=prompt_embeds,
-                        negative_prompt_embeds=negative_prompt_embeds,
-                        num_inference_steps=20,  # 15 -> 20 (정확도 향상)
-                        guidance_scale=9.5,  # 프롬프트 준수도 향상
-                        height=512,
-                        width=512,
-                        generator=None
-                    )
+                    # SDXL-Turbo는 1-4 steps, guidance_scale 0.0 권장
+                    # SD 1.4는 기존 설정 유지
+                    seed = 42
+                    generator_obj = torch.Generator(device="cpu").manual_seed(seed)
+                    
+                    # SDXL-Turbo 감지 (모델명으로 판단)
+                    is_sdxl_turbo = "sdxl-turbo" in str(self.pipe.config._name_or_path).lower()
+                    
+                    if is_sdxl_turbo:
+                        # SDXL-Turbo: 1 step, no guidance (빠르고 정확)
+                        result = self.pipe(
+                            prompt_embeds=prompt_embeds,
+                            negative_prompt_embeds=negative_prompt_embeds,
+                            num_inference_steps=4,  # Turbo는 1-4 steps
+                            guidance_scale=0.0,  # Turbo는 guidance 불필요
+                            height=512,
+                            width=512,
+                            generator=generator_obj
+                        )
+                    else:
+                        # SD 1.4: 기존 설정
+                        result = self.pipe(
+                            prompt_embeds=prompt_embeds,
+                            negative_prompt_embeds=negative_prompt_embeds,
+                            num_inference_steps=30,
+                            guidance_scale=15.0,
+                            height=512,
+                            width=512,
+                            generator=generator_obj
+                        )
                 
                 image = result.images[0]
-                print("✅ 이미지 생성 완료!")
-                return image
+                
+                # 후처리: 상단 40% 크롭하여 얼굴/목 완전 제거
+                width, height = image.size
+                crop_top = int(height * 0.40)  # 상단 40% 제거 (목까지 제거)
+                cropped_image = image.crop((0, crop_top, width, height))
+                
+                # 원래 크기로 조정 (흰색 여백 추가)
+                from PIL import Image as PILImage
+                final_image = PILImage.new('RGB', (width, height), color=(255, 255, 255))
+                final_image.paste(cropped_image, (0, 0))
+                
+                print("✅ 이미지 생성 완료 (얼굴/목 완전 제거)")
+                return final_image
             finally:
                 # 패치 복원
                 self.pipe.prepare_latents = original_prepare_latents

@@ -1,6 +1,6 @@
 """
 코디 추천 엔진 - 핵심 추천 로직
-날씨, MBTI, 텍스트 검색 등을 통합한 추천 시스템
+통합 분석: 성별 + MBTI + 이미지 분석 + 온도/계절 → 스타일 → 아이템 → 제품
 """
 
 from config import MBTI_STYLES, SEASONAL_GUIDE, WEATHER_GUIDE
@@ -13,12 +13,548 @@ class RecommendationEngine:
         self.seasonal_guide = SEASONAL_GUIDE
         self.weather_guide = WEATHER_GUIDE
     
+    def generate_unified_outfit_recommendations(self, gender, mbti, temperature, weather, season,
+                                                 detected_items=None, style_analysis=None):
+        """
+        통합 추천 생성: 성별 + MBTI + 이미지 분석 + 온도/계절 → 스타일 → 아이템 → 제품
+        
+        Returns:
+            {
+                "outfit_versions": [
+                    {
+                        "style": "트렌디 스타일",
+                        "description": "통합 분석 기반 스타일 설명",
+                        "items": ["검은색 긴팔 셔츠", "회색 바지", ...],
+                        "products": ["아크테릭스 캡", "나이키 테크플리스", ...]
+                    },
+                    ...
+                ],
+                "recommendation_reason": [...]
+            }
+        """
+        # 1. MBTI 스타일 정보 (모든 MBTI 지원)
+        mbti_style = self.mbti_styles.get(mbti, self.mbti_styles["ENFP"])
+        
+        # 2. 계절/날씨/온도 정보
+        seasonal_info = self.seasonal_guide.get(season, self.seasonal_guide["봄"])
+        weather_info = self.weather_guide.get(weather, self.weather_guide["맑음"])
+        temp_guidance = self._get_temperature_guidance(temperature)
+        
+        # 3. 이미지 분석 결과 통합
+        image_suggestions = self._integrate_image_analysis(
+            detected_items, style_analysis, seasonal_info, weather_info
+        )
+        
+        # 4. 통합 스타일 생성 (성별 + MBTI + 이미지 분석 + 온도/계절)
+        unified_styles = self._generate_unified_styles(
+            gender, mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+        )
+        
+        # 5. 각 스타일에 대한 아이템 생성
+        outfit_versions = []
+        for style_info in unified_styles[:3]:  # 최대 3개 버전
+            items = self._generate_outfit_items(
+                style_info, gender, mbti_style, seasonal_info, weather_info, 
+                temp_guidance, image_suggestions
+            )
+            
+            # 6. 아이템 기반 제품 추천
+            products = self._generate_product_recommendations(
+                items, style_info["style"], gender, mbti_style
+            )
+            
+            outfit_versions.append({
+                "style": style_info["style"],
+                "description": style_info["description"],
+                "items": items,
+                "products": products,
+                "gender": gender
+            })
+        
+        # 7. 추천 이유 생성
+        recommendation_reason = self._generate_recommendation_reason(
+            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+        )
+        
+        return {
+            "outfit_versions": outfit_versions,
+            "recommendation_reason": recommendation_reason,
+            "mbti_style": mbti_style,
+            "seasonal_info": seasonal_info,
+            "weather_info": weather_info,
+            "temperature_guidance": temp_guidance,
+            "image_suggestions": image_suggestions
+        }
+    
+    def _generate_unified_styles(self, gender, mbti_style, seasonal_info, weather_info, 
+                                temp_guidance, image_suggestions):
+        """통합 스타일 생성 (성별 + MBTI + 이미지 분석 + 온도/계절)"""
+        styles = []
+        
+        # 스타일 1: MBTI 중심 스타일
+        style1 = {
+            "style": f"{mbti_style['style']} 스타일",
+            "description": (
+                f"{mbti_style['description']}. "
+                f"{seasonal_info['mood']}한 {seasonal_info['colors'][0]} 톤으로 "
+                f"{temp_guidance['mood']}한 {temp_guidance['material']} 소재 활용"
+            ),
+            "priority": "mbti"
+        }
+        styles.append(style1)
+        
+        # 스타일 2: 계절/날씨 중심 스타일
+        style2 = {
+            "style": f"{seasonal_info['mood']}한 {seasonal_info['materials'][0]} 스타일",
+            "description": (
+                f"{seasonal_info['mood']}한 {seasonal_info['colors'][0]} 톤의 "
+                f"{seasonal_info['materials'][0]} 소재 코디. "
+                f"{weather_info['mood']}한 {weather_info['accessories'][0]} 액세서리 추천"
+            ),
+            "priority": "season"
+        }
+        styles.append(style2)
+        
+        # 스타일 3: 이미지 분석 기반 스타일 (이미지가 있는 경우)
+        if image_suggestions and image_suggestions.get("style_matches"):
+            top_style = max(image_suggestions["style_matches"].items(), key=lambda x: x[1])
+            style3 = {
+                "style": f"{top_style[0]} 스타일",
+                "description": (
+                    f"현재 코디 분석 결과 {top_style[0]} 스타일이 높게 매칭됩니다. "
+                    f"{mbti_style['style']} 요소를 가미한 조화로운 코디"
+                ),
+                "priority": "image"
+            }
+            styles.append(style3)
+        else:
+            # 이미지 분석 없을 경우 날씨 중심
+            style3 = {
+                "style": f"{weather_info['mood']}한 스타일",
+                "description": (
+                    f"{weather_info['mood']}한 날씨에 맞춘 코디. "
+                    f"{mbti_style['colors'][0]} 톤 추천"
+                ),
+                "priority": "weather"
+            }
+            styles.append(style3)
+        
+        return styles
+    
+    def _generate_outfit_items(self, style_info, gender, mbti_style, seasonal_info, 
+                              weather_info, temp_guidance, image_suggestions):
+        """스타일 기반 아이템 생성"""
+        items = []
+        
+        # 온도 기반 기본 아이템 선택
+        if temp_guidance["layer"] == "다층":
+            # 겨울용: 상의 + 재킷/코트 + 하의
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            
+            items.append(f"{top_color} 긴팔 셔츠")
+            items.append(f"{top_color} {temp_guidance['material']} 재킷 또는 코트")
+            items.append(f"{bottom_color} 바지")
+        elif temp_guidance["layer"] == "중간":
+            # 가을/봄용: 상의 + 가디건/재킷 + 하의
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            
+            items.append(f"{top_color} 긴팔 셔츠")
+            items.append(f"{top_color} 가디건 또는 재킷")
+            items.append(f"{bottom_color} 바지")
+        elif temp_guidance["layer"] == "단일":
+            # 여름/가을용: 상의 + 하의
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            
+            items.append(f"{top_color} 반팔 티셔츠")
+            items.append(f"{bottom_color} 바지")
+        else:  # 최소
+            # 여름용: 상의 + 하의
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            
+            items.append(f"{top_color} 반팔 티셔츠")
+            items.append(f"{bottom_color} 반바지 또는 바지")
+        
+        # 신발 추가
+        if temp_guidance["layer"] in ["다층", "중간"]:
+            items.append("부츠 또는 스니커즈")
+        else:
+            items.append("스니커즈 또는 샌들")
+        
+        # 이미지 분석 결과가 있으면 조화로운 색상 적용
+        if image_suggestions and image_suggestions.get("color_matches"):
+            top_colors = sorted(image_suggestions["color_matches"].items(), 
+                              key=lambda x: x[1], reverse=True)
+            if top_colors:
+                # 첫 번째 아이템 색상 업데이트
+                detected_color = top_colors[0][0]
+                if items:
+                    # 한글 색상명으로 변환
+                    color_kr = self._translate_color_to_korean(detected_color)
+                    if color_kr:
+                        items[0] = items[0].replace(
+                            items[0].split()[0], color_kr
+                        )
+        
+        return items
+    
+    def _get_color_from_palette(self, mbti_style, seasonal_info, item_type):
+        """MBTI와 계절을 고려한 색상 선택"""
+        # MBTI 색상 우선
+        mbti_colors = mbti_style.get("colors", [])
+        seasonal_colors = seasonal_info.get("colors", [])
+        
+        # MBTI 색상을 한글 색상명으로 변환
+        color_map = {
+            "밝은색": "화이트", "파스텔": "파스텔", "컬러풀": "빨간색",
+            "강렬한색": "빨간색", "메탈릭": "회색", "다크톤": "검은색",
+            "스포티컬러": "네이비", "네이비": "네이비",
+            "뉴트럴": "베이지", "베이지": "베이지", "소프트톤": "베이지",
+            "블랙": "검은색", "모노톤": "검은색",
+            "어스톤": "갈색", "자연스러운컬러": "베이지",
+            "무채색": "회색", "심플톤": "회색", "그레이": "회색"
+        }
+        
+        # 첫 번째 MBTI 색상 사용
+        if mbti_colors:
+            mbti_color = mbti_colors[0]
+            return color_map.get(mbti_color, mbti_color)
+        
+        # 계절 색상 사용
+        if seasonal_colors:
+            seasonal_color = seasonal_colors[0]
+            return color_map.get(seasonal_color, seasonal_color)
+        
+        # 기본값
+        return "검은색" if item_type == "top" else "회색"
+    
+    def _translate_color_to_korean(self, color_text):
+        """색상 텍스트를 한글 색상명으로 변환"""
+        color_map = {
+            "red": "빨간색", "빨간색": "빨간색", "빨강": "빨간색",
+            "blue": "파란색", "파란색": "파란색", "파랑": "파란색",
+            "black": "검은색", "검은색": "검은색", "검정": "검은색",
+            "white": "흰색", "흰색": "흰색", "하얀색": "흰색",
+            "gray": "회색", "회색": "회색", "grey": "회색",
+            "brown": "갈색", "갈색": "갈색",
+            "beige": "베이지", "베이지": "베이지",
+            "navy": "네이비", "네이비": "네이비",
+            "yellow": "노란색", "노란색": "노란색", "노랑": "노란색",
+            "green": "초록색", "초록색": "초록색", "초록": "초록색",
+            "pink": "분홍색", "분홍색": "분홍색", "분홍": "분홍색",
+            "purple": "보라색", "보라색": "보라색", "보라": "보라색",
+            "orange": "오렌지", "오렌지": "오렌지",
+            "khaki": "카키", "카키": "카키"
+        }
+        
+        # 소문자로 변환 후 매칭
+        color_lower = color_text.lower()
+        for en, kr in color_map.items():
+            if en.lower() in color_lower or color_lower in en.lower():
+                return kr
+        
+        return color_text  # 변환 실패 시 원본 반환
+    
+    def _generate_product_recommendations(self, items, style, gender, mbti_style):
+        """아이템 기반 제품 추천"""
+        # 스타일 기반 기본 제품
+        style_products = self.recommend_products(style, gender)
+        
+        # MBTI 스타일 고려
+        mbti_keywords = mbti_style.get("description", "").lower()
+        
+        # 아이템에서 색상/타입 추출하여 더 구체적인 제품 추천
+        enhanced_products = []
+        
+        # 상의 아이템 확인
+        top_item = next((item for item in items if "셔츠" in item or "티" in item or "상의" in item), None)
+        if top_item:
+            if "검은색" in top_item or "black" in top_item.lower():
+                if gender == "남성":
+                    enhanced_products.append("유니클로 U 크루넥 티셔츠 (블랙)")
+                else:
+                    enhanced_products.append("자라 크롭 티셔츠 (블랙)")
+        
+        # 하의 아이템 확인
+        bottom_item = next((item for item in items if "바지" in item or "하의" in item), None)
+        if bottom_item:
+            if gender == "남성":
+                enhanced_products.append("리바이스 511 슬림진")
+            else:
+                enhanced_products.append("H&M 하이웨스트 진")
+        
+        # 신발 아이템 확인
+        shoes_item = next((item for item in items if "신발" in item or "부츠" in item or "스니커" in item), None)
+        if shoes_item:
+            if "부츠" in shoes_item:
+                enhanced_products.append("닥터마틴 1461" if gender == "남성" else "찰스앤키스 앵클부츠")
+            else:
+                enhanced_products.append("컨버스 척테일러" if gender == "남성" else "아디다스 스탠스미스")
+        
+        # 스타일 기반 제품 추가 (중복 제거)
+        for product in style_products:
+            if product not in enhanced_products:
+                enhanced_products.append(product)
+        
+        return enhanced_products[:3]  # 최대 3개
+    
+    def generate_unified_outfit_recommendations(self, gender, mbti, temperature, weather, season,
+                                                 detected_items=None, style_analysis=None):
+        """
+        통합 추천 생성: 성별 + MBTI + 이미지 분석 + 온도/계절 → 스타일 → 아이템 → 제품
+        
+        Returns:
+            {
+                "outfit_versions": [
+                    {
+                        "style": "트렌디 스타일",
+                        "description": "통합 분석 기반 스타일 설명",
+                        "items": ["검은색 긴팔 셔츠", "회색 바지", ...],
+                        "products": ["아크테릭스 캡", "나이키 테크플리스", ...],
+                        "gender": "남성"
+                    },
+                    ...
+                ],
+                "recommendation_reason": [...]
+            }
+        """
+        # 1. MBTI 스타일 정보
+        mbti_style = self.mbti_styles.get(mbti, self.mbti_styles["ENFP"])
+        
+        # 2. 계절/날씨/온도 정보
+        seasonal_info = self.seasonal_guide.get(season, self.seasonal_guide["봄"])
+        weather_info = self.weather_guide.get(weather, self.weather_guide["맑음"])
+        temp_guidance = self._get_temperature_guidance(temperature)
+        
+        # 3. 이미지 분석 결과 통합
+        image_suggestions = self._integrate_image_analysis(
+            detected_items, style_analysis, seasonal_info, weather_info
+        )
+        
+        # 4. 통합 스타일 생성
+        unified_styles = self._generate_unified_styles(
+            gender, mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+        )
+        
+        # 5. 각 스타일에 대한 아이템 생성
+        outfit_versions = []
+        for style_info in unified_styles[:3]:
+            items = self._generate_outfit_items(
+                style_info, gender, mbti_style, seasonal_info, weather_info, 
+                temp_guidance, image_suggestions
+            )
+            
+            # 6. 아이템 기반 제품 추천
+            products = self._generate_product_recommendations(
+                items, style_info["style"], gender, mbti_style
+            )
+            
+            outfit_versions.append({
+                "style": style_info["style"],
+                "description": style_info["description"],
+                "items": items,
+                "products": products,
+                "gender": gender
+            })
+        
+        # 7. 추천 이유 생성
+        recommendation_reason = self._generate_recommendation_reason(
+            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+        )
+        
+        return {
+            "outfit_versions": outfit_versions,
+            "recommendation_reason": recommendation_reason,
+            "mbti_style": mbti_style,
+            "seasonal_info": seasonal_info,
+            "weather_info": weather_info,
+            "temperature_guidance": temp_guidance,
+            "image_suggestions": image_suggestions
+        }
+    
+    def _generate_unified_styles(self, gender, mbti_style, seasonal_info, weather_info, 
+                                temp_guidance, image_suggestions):
+        """통합 스타일 생성"""
+        styles = []
+        
+        # 스타일 1: MBTI 중심
+        style1 = {
+            "style": f"{mbti_style['style']} 스타일",
+            "description": (
+                f"{mbti_style['description']}. "
+                f"{seasonal_info['mood']}한 {seasonal_info['colors'][0]} 톤으로 "
+                f"{temp_guidance['mood']}한 {temp_guidance['material']} 소재 활용"
+            ),
+            "priority": "mbti"
+        }
+        styles.append(style1)
+        
+        # 스타일 2: 계절/날씨 중심
+        style2 = {
+            "style": f"{seasonal_info['mood']}한 {seasonal_info['materials'][0]} 스타일",
+            "description": (
+                f"{seasonal_info['mood']}한 {seasonal_info['colors'][0]} 톤의 "
+                f"{seasonal_info['materials'][0]} 소재 코디. "
+                f"{weather_info['mood']}한 {weather_info['accessories'][0]} 액세서리 추천"
+            ),
+            "priority": "season"
+        }
+        styles.append(style2)
+        
+        # 스타일 3: 이미지 분석 기반 또는 날씨 중심
+        if image_suggestions and image_suggestions.get("style_matches"):
+            top_style = max(image_suggestions["style_matches"].items(), key=lambda x: x[1])
+            style3 = {
+                "style": f"{top_style[0]} 스타일",
+                "description": (
+                    f"현재 코디 분석 결과 {top_style[0]} 스타일이 높게 매칭됩니다. "
+                    f"{mbti_style['style']} 요소를 가미한 조화로운 코디"
+                ),
+                "priority": "image"
+            }
+        else:
+            style3 = {
+                "style": f"{weather_info['mood']}한 스타일",
+                "description": (
+                    f"{weather_info['mood']}한 날씨에 맞춘 코디. "
+                    f"{mbti_style['colors'][0]} 톤 추천"
+                ),
+                "priority": "weather"
+            }
+        styles.append(style3)
+        
+        return styles
+    
+    def _generate_outfit_items(self, style_info, gender, mbti_style, seasonal_info, 
+                              weather_info, temp_guidance, image_suggestions):
+        """스타일 기반 아이템 생성"""
+        items = []
+        
+        # 온도 기반 기본 아이템
+        if temp_guidance["layer"] == "다층":
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            items.append(f"{top_color} 긴팔 셔츠")
+            items.append(f"{top_color} {temp_guidance['material']} 재킷 또는 코트")
+            items.append(f"{bottom_color} 바지")
+        elif temp_guidance["layer"] == "중간":
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            items.append(f"{top_color} 긴팔 셔츠")
+            items.append(f"{top_color} 가디건 또는 재킷")
+            items.append(f"{bottom_color} 바지")
+        elif temp_guidance["layer"] == "단일":
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            items.append(f"{top_color} 반팔 티셔츠")
+            items.append(f"{bottom_color} 바지")
+        else:
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            items.append(f"{top_color} 반팔 티셔츠")
+            items.append(f"{bottom_color} 반바지 또는 바지")
+        
+        # 신발 추가
+        if temp_guidance["layer"] in ["다층", "중간"]:
+            items.append("부츠 또는 스니커즈")
+        else:
+            items.append("스니커즈 또는 샌들")
+        
+        # 이미지 분석 결과가 있으면 색상 조정
+        if image_suggestions and image_suggestions.get("color_matches"):
+            top_colors = sorted(image_suggestions["color_matches"].items(), 
+                              key=lambda x: x[1], reverse=True)
+            if top_colors:
+                detected_color = top_colors[0][0]
+                color_kr = self._translate_color_to_korean(detected_color)
+                if color_kr and items:
+                    items[0] = items[0].replace(items[0].split()[0], color_kr)
+        
+        return items
+    
+    def _get_color_from_palette(self, mbti_style, seasonal_info, item_type):
+        """MBTI와 계절을 고려한 색상 선택"""
+        mbti_colors = mbti_style.get("colors", [])
+        seasonal_colors = seasonal_info.get("colors", [])
+        
+        color_map = {
+            "밝은색": "화이트", "파스텔": "파스텔", "컬러풀": "빨간색",
+            "강렬한색": "빨간색", "메탈릭": "회색", "다크톤": "검은색",
+            "스포티컬러": "네이비", "네이비": "네이비",
+            "뉴트럴": "베이지", "베이지": "베이지", "소프트톤": "베이지",
+            "블랙": "검은색", "모노톤": "검은색",
+            "어스톤": "갈색", "자연스러운컬러": "베이지",
+            "무채색": "회색", "심플톤": "회색", "그레이": "회색"
+        }
+        
+        if mbti_colors:
+            mbti_color = mbti_colors[0]
+            return color_map.get(mbti_color, mbti_color)
+        
+        if seasonal_colors:
+            seasonal_color = seasonal_colors[0]
+            return color_map.get(seasonal_color, seasonal_color)
+        
+        return "검은색" if item_type == "top" else "회색"
+    
+    def _translate_color_to_korean(self, color_text):
+        """색상 텍스트를 한글 색상명으로 변환"""
+        color_map = {
+            "red": "빨간색", "빨간색": "빨간색", "빨강": "빨간색",
+            "blue": "파란색", "파란색": "파란색", "파랑": "파란색",
+            "black": "검은색", "검은색": "검은색", "검정": "검은색",
+            "white": "흰색", "흰색": "흰색", "하얀색": "흰색",
+            "gray": "회색", "회색": "회색", "grey": "회색",
+            "brown": "갈색", "갈색": "갈색",
+            "beige": "베이지", "베이지": "베이지",
+            "navy": "네이비", "네이비": "네이비"
+        }
+        
+        color_lower = color_text.lower()
+        for en, kr in color_map.items():
+            if en.lower() in color_lower or color_lower in en.lower():
+                return kr
+        
+        return color_text
+    
+    def _generate_product_recommendations(self, items, style, gender, mbti_style):
+        """아이템 기반 제품 추천"""
+        style_products = self.recommend_products(style, gender)
+        
+        enhanced_products = []
+        
+        # 상의 아이템 확인
+        top_item = next((item for item in items if "셔츠" in item or "티" in item), None)
+        if top_item:
+            if "검은색" in top_item or "black" in top_item.lower():
+                enhanced_products.append("유니클로 U 크루넥 티셔츠 (블랙)" if gender == "남성" else "자라 크롭 티셔츠 (블랙)")
+        
+        # 하의 아이템 확인
+        bottom_item = next((item for item in items if "바지" in item), None)
+        if bottom_item:
+            enhanced_products.append("리바이스 511 슬림진" if gender == "남성" else "H&M 하이웨스트 진")
+        
+        # 신발 아이템 확인
+        shoes_item = next((item for item in items if "신발" in item or "부츠" in item or "스니커" in item), None)
+        if shoes_item:
+            if "부츠" in shoes_item:
+                enhanced_products.append("닥터마틴 1461" if gender == "남성" else "찰스앤키스 앵클부츠")
+            else:
+                enhanced_products.append("컨버스 척테일러" if gender == "남성" else "아디다스 스탠스미스")
+        
+        for product in style_products:
+            if product not in enhanced_products:
+                enhanced_products.append(product)
+        
+        return enhanced_products[:3]
+    
     def get_personalized_recommendation(self, mbti, temperature, weather, season,
                                        detected_items=None, style_analysis=None):
-        """개인화된 코디 추천 (이미지 분석 결과 포함)"""
-        # MBTI 기반 스타일 분석 (기타인 경우 ENFP 기본값 사용)
-        if mbti == "기타":
-            mbti = "ENFP"
+        """개인화된 코디 추천 (기존 호환성 유지)"""
+        # MBTI 기반 스타일 분석
         mbti_style = self.mbti_styles.get(mbti, self.mbti_styles["ENFP"])
         
         # 계절별 가이드 적용
@@ -30,7 +566,7 @@ class RecommendationEngine:
         # 온도별 추가 고려사항
         temp_guidance = self._get_temperature_guidance(temperature)
         
-        # 이미지 분석 결과 통합 (새로 추가)
+        # 이미지 분석 결과 통합
         image_based_suggestions = self._integrate_image_analysis(
             detected_items, style_analysis, seasonal_info, weather_info
         )
@@ -40,10 +576,10 @@ class RecommendationEngine:
             "seasonal_info": seasonal_info,
             "weather_info": weather_info,
             "temperature_guidance": temp_guidance,
-            "image_suggestions": image_based_suggestions,  # 이미지 기반 추천 추가
+            "image_suggestions": image_based_suggestions,
             "recommendation_reason": self._generate_recommendation_reason(
                 mbti_style, seasonal_info, weather_info, temp_guidance,
-                image_based_suggestions  # 이미지 분석 결과도 이유에 포함
+                image_based_suggestions
             )
         }
     
@@ -61,7 +597,7 @@ class RecommendationEngine:
         if detected_items and len(detected_items) > 0:
             items = detected_items if isinstance(detected_items, list) else detected_items.get("items", [])
             
-            for item in items[:5]:  # 상위 5개만
+            for item in items[:5]:
                 item_class = item.get("class", "")
                 item_class_en = item.get("class_en", "")
                 confidence = item.get("confidence", 0)
@@ -98,39 +634,25 @@ class RecommendationEngine:
     def _get_complementary_items(self, item_class, item_class_en):
         """탐지된 아이템과 조화로운 추가 아이템 추천"""
         complementary_map = {
-            # 상의
-            "반팔 상의": ["긴팔 재킷", "가디건", "베스트"],
-            "긴팔 상의": ["가디건", "후드집업", "스카프"],
-            "상의": ["재킷", "가디건", "목도리"],
-            
-            # 하의
-            "바지": ["부츠", "스니커즈", "벨트"],
-            "반바지": ["스니커즈", "슬리퍼", "삭스"],
-            "스커트": ["부츠", "플랫슈즈", "스타킹"],
-            
-            # 드레스
-            "드레스": ["재킷", "부츠", "가방"],
-            "반팔 드레스": ["가디건", "스니커즈", "모자"],
-            "긴팔 드레스": ["코트", "부츠", "가방"],
+            "상의": ["하의", "신발", "액세서리"],
+            "하의": ["상의", "신발", "벨트"],
+            "신발": ["상의", "하의", "양말"],
+            "재킷": ["상의", "하의", "스카프"],
+            "가방": ["상의", "하의", "액세서리"]
         }
         
-        # 한국어와 영어 모두 확인
-        for key in [item_class, item_class_en]:
-            if key in complementary_map:
-                return complementary_map[key]
+        # 영어 클래스명도 확인
+        if "top" in item_class_en.lower() or "shirt" in item_class_en.lower():
+            return ["바지", "스니커즈", "가디건"]
+        elif "bottom" in item_class_en.lower() or "pants" in item_class_en.lower():
+            return ["셔츠", "부츠", "벨트"]
+        elif "shoe" in item_class_en.lower() or "boot" in item_class_en.lower():
+            return ["셔츠", "바지", "양말"]
         
-        # 부분 매칭
-        if "상의" in item_class or "top" in item_class_en.lower():
-            return ["재킷", "가디건", "액세서리"]
-        elif "하의" in item_class or "trousers" in item_class_en.lower() or "shorts" in item_class_en.lower():
-            return ["신발", "벨트", "삭스"]
-        elif "드레스" in item_class or "dress" in item_class_en.lower():
-            return ["재킷", "신발", "가방"]
-        
-        return ["액세서리", "신발", "가방"]  # 기본값
+        return complementary_map.get(item_class, ["액세서리", "신발"])
     
     def _generate_image_based_combinations(self, detected_items, style_analysis, seasonal_info):
-        """이미지 분석 결과 기반 조합 추천 생성"""
+        """이미지 분석 기반 조합 생성"""
         combinations = []
         
         if not detected_items:
@@ -140,42 +662,34 @@ class RecommendationEngine:
         if not items:
             return combinations
         
-        # 탐지된 아이템에서 상의/하의/드레스 분류
-        tops = [item for item in items if "상의" in item.get("class", "") or "top" in item.get("class_en", "").lower()]
-        bottoms = [item for item in items if any(kw in item.get("class", "") for kw in ["바지", "반바지", "스커트"]) or 
-                   any(kw in item.get("class_en", "").lower() for kw in ["trousers", "shorts", "skirt"])]
-        dresses = [item for item in items if "드레스" in item.get("class", "") or "dress" in item.get("class_en", "").lower()]
+        # 상의/하의 분류
+        tops = [item for item in items if "top" in item.get("class_en", "").lower() or "상의" in item.get("class", "")]
+        bottoms = [item for item in items if "bottom" in item.get("class_en", "").lower() or "하의" in item.get("class", "")]
+        dresses = [item for item in items if "dress" in item.get("class_en", "").lower() or "드레스" in item.get("class", "")]
         
-        # CLIP 색상 분석
+        # 색상 추출 (CLIP 분석 결과 활용)
         detected_color = None
-        if style_analysis and style_analysis.get("color"):
-            detected_color = style_analysis["color"]
-        elif style_analysis and style_analysis.get("text_matches"):
-            # 색상 점수가 가장 높은 것 선택
+        if style_analysis and style_analysis.get("text_matches"):
             color_matches = {k: v for k, v in style_analysis["text_matches"].items() 
-                           if any(c in k.lower() for c in ["색", "color", "red", "blue", "black", "white"])}
+                           if any(c in k.lower() for c in ["red", "blue", "black", "white", "gray", "빨간", "파란", "검은", "흰", "회색"])}
             if color_matches:
                 detected_color = max(color_matches.items(), key=lambda x: x[1])[0]
         
-        # 조합 1: 상의 + 하의 조합 (구체적 색상과 타입 포함)
+        # 조합 1: 상의 + 하의 조합 (구체적 색상 포함)
         if tops and bottoms:
             top_item = tops[0]
             bottom_item = bottoms[0]
             
-            # 상의 색상 (탐지된 색상 우선, 없으면 계절 색상)
-            seasonal_color = seasonal_info.get("colors", ["뉴트럴"])[0] if seasonal_info else "뉴트럴"
-            top_color = detected_color if detected_color else seasonal_color
+            top_class = top_item.get("class", "상의")
+            top_class_en = top_item.get("class_en", "").lower()
+            bottom_class = bottom_item.get("class", "하의")
+            bottom_class_en = bottom_item.get("class_en", "").lower()
             
-            # 하의 색상 (조화로운 색상 선택)
-            bottom_color_map = {
-                "검은색": "회색", "흰색": "베이지", "빨간색": "검은색",
-                "파란색": "네이비", "노란색": "카키", "분홍색": "흰색"
-            }
-            bottom_color = bottom_color_map.get(top_color, "회색" if top_color == "검은색" else "베이지")
+            # 색상 결정
+            top_color = detected_color if detected_color else seasonal_info.get("colors", ["뉴트럴"])[0]
+            bottom_color = "회색" if top_color in ["검은색", "흰색"] else "검은색"
             
-            # 상의 타입 구체화 (긴팔/반팔 구분)
-            top_class = top_item.get('class', '상의')
-            top_class_en = top_item.get('class_en', '').lower()
+            # 타입 결정
             if "long sleeve" in top_class_en or "긴팔" in top_class:
                 top_type = "긴팔 셔츠"
             elif "short sleeve" in top_class_en or "반팔" in top_class:
@@ -183,18 +697,15 @@ class RecommendationEngine:
             else:
                 top_type = "셔츠"
             
-            # 하의 타입 구체화
-            bottom_class = bottom_item.get('class', '하의')
-            bottom_class_en = bottom_item.get('class_en', '').lower()
-            if "trousers" in bottom_class_en or "바지" in bottom_class:
+            if "trousers" in bottom_class_en or "pants" in bottom_class_en or "바지" in bottom_class:
                 bottom_type = "바지"
             elif "shorts" in bottom_class_en or "반바지" in bottom_class:
                 bottom_type = "반바지"
             else:
-                bottom_type = "하의"
+                bottom_type = "바지"
             
             combinations.append({
-                "type": "상하 분리형",
+                "type": "상의+하의 조합",
                 "items": [
                     f"{top_color} {top_type}",
                     f"{bottom_color} {bottom_type}",
@@ -203,73 +714,8 @@ class RecommendationEngine:
                 "reason": f"현재 코디를 기반으로 {top_color} 톤으로 조화롭게 연출"
             })
         
-        # 조합 2: 드레스 기반
-        if dresses:
-            dress_item = dresses[0]
-            dress_color = detected_color if detected_color else seasonal_info.get("colors", ["뉴트럴"])[0]
-            
-            combinations.append({
-                "type": "원피스 스타일",
-                "items": [
-                    f"{dress_item.get('class', '드레스')}",
-                    "재킷 또는 가디건",
-                    "부츠 또는 스니커즈"
-                ],
-                "reason": f"탐지된 {dress_item.get('class', '드레스')}를 중심으로 레이어링 코디"
-            })
-        
-        # 조합 3: 단일 아이템 기반 확장 (구체적 색상 포함)
-        if (tops and not bottoms) or (bottoms and not tops):
-            single_item = tops[0] if tops else bottoms[0]
-            item_type = "상의" if tops else "하의"
-            
-            # 색상 추출
-            item_color = detected_color if detected_color else (seasonal_info.get("colors", ["뉴트럴"])[0] if seasonal_info else "뉴트럴")
-            
-            # 상의인 경우 구체적 타입
-            if tops:
-                top_class = single_item.get('class', '상의')
-                top_class_en = single_item.get('class_en', '').lower()
-                if "long sleeve" in top_class_en or "긴팔" in top_class:
-                    item_display = f"{item_color} 긴팔 셔츠"
-                elif "short sleeve" in top_class_en or "반팔" in top_class:
-                    item_display = f"{item_color} 반팔 티셔츠"
-                else:
-                    item_display = f"{item_color} 셔츠"
-            # 하의인 경우
-            else:
-                bottom_class = single_item.get('class', '하의')
-                bottom_class_en = single_item.get('class_en', '').lower()
-                if "trousers" in bottom_class_en or "바지" in bottom_class:
-                    item_display = f"{item_color} 바지"
-                elif "shorts" in bottom_class_en or "반바지" in bottom_class:
-                    item_display = f"{item_color} 반바지"
-                else:
-                    item_display = f"{item_color} {item_type}"
-            
-            # 조화로운 추가 아이템 색상
-            complementary_color = "검은색" if item_color in ["흰색", "베이지"] else "회색"
-            
-            complementary = self._get_complementary_items(single_item.get("class", ""), single_item.get("class_en", ""))
-            items_list = [item_display]
-            
-            # 보완 아이템에 색상 추가
-            for comp_item in complementary[:2]:
-                if "신발" in comp_item or "부츠" in comp_item or "스니커즈" in comp_item:
-                    items_list.append(f"{complementary_color} {comp_item}")
-                elif "재킷" in comp_item or "가디건" in comp_item:
-                    items_list.append(f"{complementary_color} {comp_item}")
-                else:
-                    items_list.append(comp_item)
-            
-            combinations.append({
-                "type": "단일 아이템 확장",
-                "items": items_list,
-                "reason": f"현재 {item_display}에 조화로운 아이템 추가"
-            })
-        
-        return combinations[:3]  # 최대 3개만
-
+        return combinations[:3]
+    
     def recommend_products(self, style: str, gender: str):
         """스타일/성별 기반 구체 제품 추천 (간단 카탈로그)"""
         gender = gender or "공용"
@@ -290,9 +736,34 @@ class RecommendationEngine:
                 "공용": ["노스페이스 눕시", "뉴발란스 9060"]
             }
         }
-        pool = catalog.get(style, catalog["캐주얼"]).get(gender, catalog["캐주얼"]["공용"])
+        
+        # 스타일 매핑 (다양한 스타일명 지원)
+        style_mapping = {
+            "캐주얼": "캐주얼",
+            "포멀": "포멀",
+            "트렌디": "트렌디",
+            "자유롭고 창의적": "캐주얼",
+            "도전적": "트렌디",
+            "감각적": "트렌디",
+            "활동적": "캐주얼",
+            "세련되고 따뜻한": "포멀",
+            "리더십": "포멀",
+            "단정하고 따뜻한": "포멀",
+            "실용적": "포멀",
+            "감성적": "캐주얼",
+            "신비롭고 세련된": "포멀",
+            "감각적": "트렌디",
+            "실용적": "캐주얼",
+            "독창적": "트렌디",
+            "전략적": "포멀",
+            "정갈하고 따뜻한": "포멀",
+            "전통적": "포멀"
+        }
+        
+        mapped_style = style_mapping.get(style, "캐주얼")
+        pool = catalog.get(mapped_style, catalog["캐주얼"]).get(gender, catalog["캐주얼"]["공용"])
         return pool[:3]
-
+    
     def evaluate_current_outfit(self, detected_items, style_analysis, weather: str, season: str):
         """현재 코디 평가 점수 및 피드백 생성"""
         score = 50
@@ -347,69 +818,28 @@ class RecommendationEngine:
             detected_info = image_suggestions.get("detected_items_info", [])
             if detected_info:
                 detected_names = [item["item"] for item in detected_info[:2]]
-                reasons.append(f"• 현재 코디의 {', '.join(detected_names)}를 고려한 조화로운 추천")
-            
-            style_matches = image_suggestions.get("style_matches", {})
-            if style_matches:
-                top_style = max(style_matches.items(), key=lambda x: x[1])[0]
-                reasons.append(f"• 이미지 분석 결과 {top_style} 스타일이 가장 높게 나타남")
-            
-            color_matches = image_suggestions.get("color_matches", {})
-            if color_matches:
-                top_color = max(color_matches.items(), key=lambda x: x[1])[0]
-                reasons.append(f"• 이미지에서 {top_color} 톤이 주로 감지되어 색상 조합에 반영")
+                reasons.append(f"• 현재 착용 중인 {', '.join(detected_names)}와 조화로운 코디")
         
         return reasons
     
-    def search_text_based_outfits(self, query):
-        """텍스트 기반 코디 검색"""
-        # 주의: CLIP 모델 매칭은 TextBasedSearcher 클래스에서 처리됨
-        outfit_categories = {
-            "파티용": {
-                "items": ["화려한 드레스", "시퀸 원피스", "스팽글 액세서리"],
-                "colors": ["골드", "실버", "레드"],
-                "mood": "화려하고 우아한"
-            },
-            "출근룩": {
-                "items": ["정장", "블라우스", "슬랙스", "로퍼"],
-                "colors": ["네이비", "블랙", "화이트"],
-                "mood": "깔끔하고 전문적인"
-            },
-            "데이트룩": {
-                "items": ["로맨틱 원피스", "부드러운 컬러", "우아한 액세서리"],
-                "colors": ["핑크", "라벤더", "크림"],
-                "mood": "로맨틱하고 우아한"
-            }
-        }
-        
-        # 쿼리에서 카테고리 매칭
-        for category, info in outfit_categories.items():
-            if category in query:
-                return {
-                    "category": category,
-                    "items": info["items"],
-                    "colors": info["colors"],
-                    "mood": info["mood"]
-                }
-        
-        return {"category": "일반", "items": ["캐주얼 웨어"], "colors": ["뉴트럴"], "mood": "편안한"}
-    
     def get_celebrity_style_reference(self, outfit_style):
-        """연예인 스타일 참고 제공"""
-        # TODO: 실제 연예인 데이터베이스 연동
+        """코디에 맞는 롤모델 스타일 참고"""
         celebrity_styles = {
-            "캐주얼": "아이유 - 심플하고 깔끔한 스타일",
-            "포멀": "김태리 - 세련되고 우아한 스타일",
-            "트렌디": "블랙핑크 - 화려하고 개성있는 스타일"
+            "캐주얼": "공유, 수지",
+            "포멀": "이병헌, 손예진",
+            "트렌디": "송강, 제니",
+            "스포츠": "손흥민, 김연아",
+            "빈티지": "이동휘, 아이유"
         }
         return celebrity_styles.get(outfit_style, "추천 스타일 참고")
     
     def get_makeup_suggestions(self, outfit_style, mbti):
         """코디에 맞는 화장법 제안"""
-        # TODO: 화장법 데이터베이스 연동
         makeup_guide = {
             "캐주얼": "자연스러운 베이스 + 립글로스",
             "포멀": "완벽한 베이스 + 립스틱",
-            "트렌디": "아이섀도 + 하이라이터"
+            "트렌디": "강렬한 아이메이크업 + 컬러립",
+            "스포츠": "미니멀 메이크업",
+            "빈티지": "스모키 아이 + 누드립"
         }
         return makeup_guide.get(outfit_style, "자연스러운 메이크업")
