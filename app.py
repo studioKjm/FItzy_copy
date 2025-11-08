@@ -5,6 +5,8 @@ Streamlit 기반 웹 인터페이스
 
 import streamlit as st
 import datetime
+import json
+import os
 from PIL import Image
 from src.utils.recommendation_engine import RecommendationEngine
 from src.models.models import FashionRecommender
@@ -14,6 +16,27 @@ from src.utils.body_analysis import BodyAnalyzer
 from src.utils.scoring_system import ScoringSystem
 from src.utils.virtual_fitting import VirtualFittingSystem
 from config import MBTI_STYLES
+
+# 설정 파일 경로
+SETTINGS_FILE = ".fitzy_settings.json"
+
+def load_settings():
+    """설정 파일에서 설정값 로드"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_settings(settings):
+    """설정값을 파일에 저장"""
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"설정 저장 실패: {e}")
 
 # 전역 변수로 추천 엔진 초기화
 if 'recommendation_engine' not in st.session_state:
@@ -274,13 +297,29 @@ def main():
             "INFP", "INFJ", "ISFP", "ISTP",
             "INTP", "INTJ", "ISFJ", "ISTJ"
         ]
-        mbti_type = st.selectbox("MBTI 유형", mbti_options, index=0)
+        # 설정 파일에서 로드 (서버 재시작 후에도 유지)
+        saved_settings = load_settings()
+        
+        # session_state 초기화 (파일에서 로드한 값으로)
+        if 'saved_mbti' not in st.session_state:
+            st.session_state.saved_mbti = saved_settings.get('mbti', "ENFP")
+        saved_mbti_index = mbti_options.index(st.session_state.saved_mbti) if st.session_state.saved_mbti in mbti_options else 0
+        mbti_type = st.selectbox("MBTI 유형", mbti_options, index=saved_mbti_index, key="mbti_selectbox")
+        
+        # 값이 변경되면 session_state와 파일에 저장
+        if st.session_state.saved_mbti != mbti_type:
+            st.session_state.saved_mbti = mbti_type
+            saved_settings['mbti'] = mbti_type
+            save_settings(saved_settings)
         
         # 성별 선택 (자동 인식 기능)
         gender = render_gender_selector()
 
         # 진단 모드
-        debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=False)
+        if 'saved_debug_mode' not in st.session_state:
+            st.session_state.saved_debug_mode = False
+        debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=st.session_state.saved_debug_mode, key="debug_mode_toggle")
+        st.session_state.saved_debug_mode = debug_mode
         
         # AI 이미지 생성 설정 (선택적)
         with st.expander("🎨 AI 이미지 생성 설정", expanded=False):
@@ -322,11 +361,34 @@ def main():
 
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
-        temperature = st.slider("온도 (°C)", -10, 40, 20)
-        weather = st.selectbox("날씨", ["맑음", "흐림", "비", "눈", "바람"])
+        if 'saved_temperature' not in st.session_state:
+            st.session_state.saved_temperature = saved_settings.get('temperature', 20)
+        temperature = st.slider("온도 (°C)", -10, 40, st.session_state.saved_temperature, key="temperature_slider")
+        if st.session_state.saved_temperature != temperature:
+            st.session_state.saved_temperature = temperature
+            saved_settings['temperature'] = temperature
+            save_settings(saved_settings)
+        
+        weather_options = ["맑음", "흐림", "비", "눈", "바람"]
+        if 'saved_weather' not in st.session_state:
+            st.session_state.saved_weather = saved_settings.get('weather', "맑음")
+        saved_weather_index = weather_options.index(st.session_state.saved_weather) if st.session_state.saved_weather in weather_options else 0
+        weather = st.selectbox("날씨", weather_options, index=saved_weather_index, key="weather_selectbox")
+        if st.session_state.saved_weather != weather:
+            st.session_state.saved_weather = weather
+            saved_settings['weather'] = weather
+            save_settings(saved_settings)
         
         # 계절 선택
-        season = st.selectbox("계절", ["봄", "여름", "가을", "겨울"])
+        season_options = ["봄", "여름", "가을", "겨울"]
+        if 'saved_season' not in st.session_state:
+            st.session_state.saved_season = saved_settings.get('season', "봄")
+        saved_season_index = season_options.index(st.session_state.saved_season) if st.session_state.saved_season in season_options else 0
+        season = st.selectbox("계절", season_options, index=saved_season_index, key="season_selectbox")
+        if st.session_state.saved_season != season:
+            st.session_state.saved_season = season
+            saved_settings['season'] = season
+            save_settings(saved_settings)
     
     # 메인 탭 구성
     tab1, tab2, tab3, tab4 = st.tabs(["📸 이미지 분석", "🔍 텍스트 검색", "🌟 트렌드 코디", "⚙️ 모델 관리"])
@@ -679,6 +741,7 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     
     # 통합 추천이 있는 경우 사용
     outfit_data_list = []
+    outfit_styles = []  # 항상 정의되도록 초기화
     
     if outfit_versions and len(outfit_versions) >= 3:
         # 통합 추천 사용 (성별 + MBTI + 이미지 분석 + 온도/계절)
@@ -715,6 +778,8 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     "idx": idx,
                     "cache_key": cache_key
                 })
+                # outfit_styles에 스타일 추가
+                outfit_styles.append(version['style'])
     else:
         # 기존 방식 (하위 호환성)
         style_matches = image_suggestions.get("style_matches", {})
@@ -814,27 +879,43 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
         
         if fitting_mode == "가상 피팅 (추천)":
             # 가상 피팅 모드: 업로드 이미지에 코디 합성
+            # 중복 실행 방지: 처리 중인 작업 추적
+            processing_key = f"virtual_fitting_processing_{st.session_state.get('last_image_hash', 'default')}"
+            
             for data in outfit_data_list:
                 with data["col"]:
-                    # 캐시 확인
-                    cache_key = f"virtual_fitting_{data['cache_key']}"
+                    # 캐시 키 개선: 아이템 리스트와 성별 포함
+                    items_str = "_".join(data["outfit_desc"]["items"][:2])  # 상의+하의만
+                    cache_key = f"virtual_fitting_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
                     
                     if cache_key not in st.session_state:
-                        with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
-                            # 원본 이미지 사용 (user_uploaded_image 또는 image)
-                            source_image = user_uploaded_image if user_uploaded_image is not None else image
-                            fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
-                                source_image,
-                                data["outfit_desc"]["items"],
-                                data["outfit_desc"]["gender"]
-                            )
-                            
-                            if fitted_image:
-                                st.session_state[cache_key] = fitted_image
-                                st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
-                                st.success("✅ 가상 피팅 완료")
-                            else:
-                                st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                        # 처리 중인지 확인
+                        if st.session_state.get(processing_key, False):
+                            st.info("⏳ 다른 가상 피팅이 진행 중입니다. 잠시만 기다려주세요...")
+                            continue
+                        
+                        # 처리 시작 플래그 설정
+                        st.session_state[processing_key] = True
+                        
+                        try:
+                            with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
+                                # 원본 이미지 사용 (user_uploaded_image 또는 image)
+                                source_image = user_uploaded_image if user_uploaded_image is not None else image
+                                fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
+                                    source_image,
+                                    data["outfit_desc"]["items"],
+                                    data["outfit_desc"]["gender"]
+                                )
+                                
+                                if fitted_image:
+                                    st.session_state[cache_key] = fitted_image
+                                    st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                                    st.success("✅ 가상 피팅 완료")
+                                else:
+                                    st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                        finally:
+                            # 처리 완료 플래그 해제
+                            st.session_state[processing_key] = False
                     else:
                         # 캐시된 이미지 사용
                         cached_image = st.session_state[cache_key]
@@ -859,14 +940,28 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     
     # 롤모델 및 화장법
     st.subheader("🌟 롤모델 스타일 참고")
-    for style in outfit_styles:
-        celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(style)
-        st.write(f"**{style} 스타일:** {celebrity}")
+    if outfit_styles:
+        for style in outfit_styles:
+            celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(style)
+            st.write(f"**{style} 스타일:** {celebrity}")
+    else:
+        # 기본 스타일 사용
+        default_styles = ["캐주얼", "포멀", "트렌디"]
+        for style in default_styles:
+            celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(style)
+            st.write(f"**{style} 스타일:** {celebrity}")
     
     st.subheader("💄 추천 화장법")
-    for style in outfit_styles:
-        makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
-        st.write(f"**{style} 스타일:** {makeup}")
+    if outfit_styles:
+        for style in outfit_styles:
+            makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
+            st.write(f"**{style} 스타일:** {makeup}")
+    else:
+        # 기본 스타일 사용
+        default_styles = ["캐주얼", "포멀", "트렌디"]
+        for style in default_styles:
+            makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
+            st.write(f"**{style} 스타일:** {makeup}")
 
     # 얼굴/체형 기반 개인화 추천
     if face_info and body_info:

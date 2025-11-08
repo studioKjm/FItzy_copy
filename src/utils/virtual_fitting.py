@@ -9,6 +9,7 @@ from PIL import Image
 import torch
 from typing import Dict, List, Tuple, Optional
 from diffusers import StableDiffusionInpaintPipeline
+from diffusers import DPMSolverMultistepScheduler
 
 
 class VirtualFittingSystem:
@@ -192,6 +193,11 @@ class VirtualFittingSystem:
                 device_map=None
             )
             
+            # PNDM 대신 더 빠르고 안정적인 DPM Solver 스케줄러 사용
+            self.inpaint_pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                self.inpaint_pipe.scheduler.config
+            )
+            
             # 디바이스 배치 (MPS: UNet만, CPU: VAE/TextEncoder)
             if self.device == "mps":
                 self.inpaint_pipe.unet = self.inpaint_pipe.unet.float().to(self.device, non_blocking=False)
@@ -202,13 +208,13 @@ class VirtualFittingSystem:
                 self._patch_vae_for_mps()
                 self._apply_mps_patches()
                 
-                print("✅ Inpainting 모델 로드 완료 (MPS/GPU 모드)")
+                print("✅ Inpainting 모델 로드 완료 (MPS/GPU 모드, DPM Solver 스케줄러)")
             else:
                 # CPU 모드
                 self.inpaint_pipe.unet = self.inpaint_pipe.unet.to("cpu")
                 self.inpaint_pipe.vae = self.inpaint_pipe.vae.to("cpu")
                 self.inpaint_pipe.text_encoder = self.inpaint_pipe.text_encoder.to("cpu")
-                print("✅ Inpainting 모델 로드 완료 (CPU 모드)")
+                print("✅ Inpainting 모델 로드 완료 (CPU 모드, DPM Solver 스케줄러)")
         except Exception as e:
             print(f"⚠️ Inpainting 모델 로드 실패: {e}")
             import traceback
@@ -471,9 +477,9 @@ class VirtualFittingSystem:
                 print(f"   - 프롬프트: {prompt}")
                 
                 try:
-                    # 이미지와 마스크를 최적 크기로 리사이즈 (한 번만, 속도 향상)
+                    # 이미지와 마스크를 최적 크기로 리사이즈 (속도 향상)
                     # 원본 크기에 비례하여 리사이즈 (너무 크면 느림)
-                    max_size = 512
+                    max_size = 512  # 최대 크기 제한
                     orig_w, orig_h = original_image.size
                     
                     # 리사이즈 필요 여부 확인
@@ -492,17 +498,24 @@ class VirtualFittingSystem:
                         mask_pil_for_inpaint = mask_pil
                         print(f"   - 원본 크기 사용: {original_image.size}")
                     
-                    # Inpainting 실행 (GPU/CPU 모드, 자연스러운 합성)
+                    # Inpainting 실행 (DPM Solver는 더 적은 스텝으로도 좋은 결과)
+                    # 스텝 수 감소: 20 → 12 (DPM Solver는 효율적)
+                    num_steps = 12 if self.device == "mps" else 8
+                    
                     with torch.no_grad():
                         try:
+                            # 스케줄러 초기화 (매번 새로 시작)
+                            if hasattr(self.inpaint_pipe.scheduler, 'set_timesteps'):
+                                self.inpaint_pipe.scheduler.set_timesteps(num_steps, device=self.device)
+                            
                             result = self.inpaint_pipe(
                                 prompt=prompt,
                                 negative_prompt=negative_prompt,
                                 image=result_pil_for_inpaint,
                                 mask_image=mask_pil_for_inpaint,
-                                num_inference_steps=20 if self.device == "mps" else 10,  # GPU: 더 많은 steps, CPU: 빠르게
-                                guidance_scale=9.0,  # 프롬프트 준수도 매우 높임
-                                strength=0.9  # 90% 변경 (더 강하게)
+                                num_inference_steps=num_steps,  # 감소된 스텝 수
+                                guidance_scale=7.5,  # 적절한 가이던스 (9.0 → 7.5)
+                                strength=0.85  # 약간 낮춤 (0.9 → 0.85)
                             )
                         except (RuntimeError, TypeError) as e:
                             error_str = str(e)
@@ -518,30 +531,57 @@ class VirtualFittingSystem:
                                     kwargs.pop('generator', None)
                                     return original_decode(z, return_dict=return_dict, **kwargs)
                                 self.inpaint_pipe.vae.decode = patched_vae_decode_fix.__get__(self.inpaint_pipe.vae, type(self.inpaint_pipe.vae))
-                                # 재시도
+                                # 재시도 (스케줄러 초기화)
+                                num_steps = 12 if self.device == "mps" else 8
+                                if hasattr(self.inpaint_pipe.scheduler, 'set_timesteps'):
+                                    self.inpaint_pipe.scheduler.set_timesteps(num_steps, device=self.device)
                                 result = self.inpaint_pipe(
                                     prompt=prompt,
                                     negative_prompt=negative_prompt,
                                     image=result_pil_for_inpaint,
                                     mask_image=mask_pil_for_inpaint,
-                                    num_inference_steps=20 if self.device == "mps" else 10,
-                                    guidance_scale=9.0,
-                                    strength=0.9
+                                    num_inference_steps=num_steps,
+                                    guidance_scale=7.5,
+                                    strength=0.85
                                 )
                             elif "must be on the same device" in error_str or "same device" in error_str:
                                 # 디바이스 오류 - MPS 패치 재적용
                                 print(f"   ⚠️ 디바이스 오류, MPS 패치 재적용 중...")
                                 # 패치 재적용
                                 self._apply_mps_patches()
-                                # 재시도
+                                # 재시도 (스케줄러 초기화)
+                                num_steps = 12 if self.device == "mps" else 8
+                                if hasattr(self.inpaint_pipe.scheduler, 'set_timesteps'):
+                                    self.inpaint_pipe.scheduler.set_timesteps(num_steps, device=self.device)
                                 result = self.inpaint_pipe(
                                     prompt=prompt,
                                     negative_prompt=negative_prompt,
                                     image=result_pil_for_inpaint,
                                     mask_image=mask_pil_for_inpaint,
-                                    num_inference_steps=20 if self.device == "mps" else 10,
-                                    guidance_scale=9.0,
-                                    strength=0.9
+                                    num_inference_steps=num_steps,
+                                    guidance_scale=7.5,
+                                    strength=0.85
+                                )
+                            elif "list index out of range" in error_str or "IndexError" in error_str:
+                                # 스케줄러 초기화 오류 - 스케줄러 재초기화
+                                print(f"   ⚠️ 스케줄러 초기화 오류, 재초기화 중...")
+                                # 스케줄러 재생성
+                                from diffusers import DPMSolverMultistepScheduler
+                                self.inpaint_pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                                    self.inpaint_pipe.scheduler.config
+                                )
+                                # 재시도
+                                num_steps = 12 if self.device == "mps" else 8
+                                if hasattr(self.inpaint_pipe.scheduler, 'set_timesteps'):
+                                    self.inpaint_pipe.scheduler.set_timesteps(num_steps, device=self.device)
+                                result = self.inpaint_pipe(
+                                    prompt=prompt,
+                                    negative_prompt=negative_prompt,
+                                    image=result_pil_for_inpaint,
+                                    mask_image=mask_pil_for_inpaint,
+                                    num_inference_steps=num_steps,
+                                    guidance_scale=7.5,
+                                    strength=0.85
                                 )
                             else:
                                 # 다른 오류는 재발생
@@ -638,21 +678,46 @@ class VirtualFittingSystem:
         # 변환
         en_item = item_text
         
-        # 색상 추출
+        # 색상 추출 (더 정확하게)
         extracted_colors = []
+        item_text_lower = item_text.lower()
+        
+        # 한글 색상명 먼저 확인
         for kr, en in color_map.items():
             if kr in item_text:
                 extracted_colors.append(en)
-                en_item = en_item.replace(kr, en)
+                # 색상명 제거하여 타입만 남김
+                en_item = en_item.replace(kr, "").strip()
+        
+        # 영어 색상명도 확인
+        if not extracted_colors:
+            for kr, en in color_map.items():
+                if en.lower() in item_text_lower:
+                    extracted_colors.append(en)
+                    en_item = en_item.replace(en, "").strip()
         
         extracted_color = extracted_colors[0] if extracted_colors else None
         
-        # 의류 타입 추출
+        # 의류 타입 추출 (더 정확하게)
         extracted_type = None
+        # 긴팔/반팔 먼저 확인
+        if "긴팔" in item_text or "long sleeve" in item_text_lower:
+            extracted_type = "long sleeve"
+        elif "반팔" in item_text or "short sleeve" in item_text_lower:
+            extracted_type = "short sleeve"
+        
+        # 그 다음 셔츠/티셔츠/바지 등 확인
         for kr, en in item_map.items():
             if kr in item_text:
-                extracted_type = en
-                en_item = en_item.replace(kr, en)
+                if extracted_type:
+                    # 이미 긴팔/반팔이 있으면 조합
+                    if "sleeve" in en:
+                        extracted_type = f"{extracted_type} {en.replace('sleeve', '').strip()}"
+                    else:
+                        extracted_type = f"{extracted_type} {en}"
+                else:
+                    extracted_type = en
+                en_item = en_item.replace(kr, "")
         
         # 재질 추출
         extracted_fabric = None
@@ -676,13 +741,16 @@ class VirtualFittingSystem:
             if extracted_type and extracted_color:
                 fabric_part = f"{extracted_fabric} fabric" if extracted_fabric else "cotton fabric"
                 # 타입 정확히 지정
-                if "long sleeve" in extracted_type or "긴팔" in item_text:
+                if "long sleeve" in extracted_type.lower() or "긴팔" in item_text:
                     type_spec = "long sleeve shirt"
-                elif "short sleeve" in extracted_type or "반팔" in item_text:
+                elif "short sleeve" in extracted_type.lower() or "반팔" in item_text:
                     type_spec = "short sleeve t-shirt"
+                elif "t-shirt" in extracted_type.lower() or "티" in item_text:
+                    type_spec = "t-shirt"
                 else:
                     type_spec = "shirt"
                 
+                # 색상이 정확히 반영되도록 강조
                 prompt = (
                     f"a {gender_kw} wearing a {extracted_color} {type_spec}, "
                     f"EXACTLY {extracted_color} color, {fabric_part}, "
@@ -690,6 +758,7 @@ class VirtualFittingSystem:
                     f"realistic lighting, natural shadows, high quality photo, "
                     f"professional photography, authentic clothing texture"
                 )
+                print(f"   📝 프롬프트 생성: 색상={extracted_color}, 타입={type_spec}")
             elif extracted_type:
                 fabric_part = f"{extracted_fabric} fabric" if extracted_fabric else "cotton fabric"
                 if "long sleeve" in extracted_type or "긴팔" in item_text:
@@ -718,13 +787,14 @@ class VirtualFittingSystem:
             if extracted_type and extracted_color:
                 fabric_part = f"{extracted_fabric} fabric" if extracted_fabric else "cotton fabric"
                 # 타입 정확히 지정
-                if "pants" in extracted_type or "바지" in item_text:
+                if "pants" in extracted_type.lower() or "바지" in item_text:
                     type_spec = "slim-fit trousers"
-                elif "shorts" in extracted_type or "반바지" in item_text:
+                elif "shorts" in extracted_type.lower() or "반바지" in item_text:
                     type_spec = "shorts"
                 else:
                     type_spec = "pants"
                 
+                # 색상이 정확히 반영되도록 강조
                 prompt = (
                     f"a {gender_kw} wearing {extracted_color} {type_spec}, "
                     f"EXACTLY {extracted_color} color, {fabric_part}, "

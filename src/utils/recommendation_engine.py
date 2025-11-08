@@ -430,30 +430,67 @@ class RecommendationEngine:
     
     def _generate_outfit_items(self, style_info, gender, mbti_style, seasonal_info, 
                               weather_info, temp_guidance, image_suggestions):
-        """스타일 기반 아이템 생성"""
+        """스타일 기반 아이템 생성 (각 스타일마다 다른 색상/아이템)"""
         items = []
+        
+        # 스타일별 색상 팔레트 (각 스타일마다 다른 색상 사용)
+        style_priority = style_info.get("priority", "mbti")
+        
+        if style_priority == "mbti":
+            # MBTI 스타일: MBTI 색상 우선
+            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+            # 하의는 대비되는 색상
+            if top_color in ["검은색", "네이비"]:
+                bottom_color = "회색" if top_color == "검은색" else "베이지"
+            elif top_color in ["흰색", "베이지"]:
+                bottom_color = "네이비" if top_color == "흰색" else "회색"
+            else:
+                bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+        elif style_priority == "season":
+            # 계절 스타일: 계절 색상 우선
+            seasonal_colors = seasonal_info.get("colors", [])
+            if seasonal_colors:
+                top_color = seasonal_colors[0] if len(seasonal_colors) > 0 else "검은색"
+                bottom_color = seasonal_colors[1] if len(seasonal_colors) > 1 else "회색"
+            else:
+                top_color = "검은색"
+                bottom_color = "회색"
+        else:  # image or weather
+            # 이미지/날씨 스타일: 계절 색상의 다른 조합
+            seasonal_colors = seasonal_info.get("colors", [])
+            if len(seasonal_colors) >= 2:
+                top_color = seasonal_colors[1] if len(seasonal_colors) > 1 else seasonal_colors[0]
+                bottom_color = seasonal_colors[0] if len(seasonal_colors) > 0 else "회색"
+            else:
+                top_color = "베이지"
+                bottom_color = "네이비"
+        
+        # 색상을 한글 색상명으로 변환
+        color_map = {
+            "밝은색": "화이트", "파스텔": "파스텔", "컬러풀": "빨간색",
+            "강렬한색": "빨간색", "메탈릭": "회색", "다크톤": "검은색",
+            "스포티컬러": "네이비", "네이비": "네이비",
+            "뉴트럴": "베이지", "베이지": "베이지", "소프트톤": "베이지",
+            "블랙": "검은색", "모노톤": "검은색",
+            "어스톤": "갈색", "자연스러운컬러": "베이지",
+            "무채색": "회색", "심플톤": "회색", "그레이": "회색"
+        }
+        top_color = color_map.get(top_color, top_color)
+        bottom_color = color_map.get(bottom_color, bottom_color)
         
         # 온도 기반 기본 아이템
         if temp_guidance["layer"] == "다층":
-            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
-            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
             items.append(f"{top_color} 긴팔 셔츠")
             items.append(f"{top_color} {temp_guidance['material']} 재킷 또는 코트")
             items.append(f"{bottom_color} 바지")
         elif temp_guidance["layer"] == "중간":
-            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
-            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
             items.append(f"{top_color} 긴팔 셔츠")
             items.append(f"{top_color} 가디건 또는 재킷")
             items.append(f"{bottom_color} 바지")
         elif temp_guidance["layer"] == "단일":
-            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
-            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
             items.append(f"{top_color} 반팔 티셔츠")
             items.append(f"{bottom_color} 바지")
         else:
-            top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
-            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
             items.append(f"{top_color} 반팔 티셔츠")
             items.append(f"{bottom_color} 반바지 또는 바지")
         
@@ -462,16 +499,6 @@ class RecommendationEngine:
             items.append("부츠 또는 스니커즈")
         else:
             items.append("스니커즈 또는 샌들")
-        
-        # 이미지 분석 결과가 있으면 색상 조정
-        if image_suggestions and image_suggestions.get("color_matches"):
-            top_colors = sorted(image_suggestions["color_matches"].items(), 
-                              key=lambda x: x[1], reverse=True)
-            if top_colors:
-                detected_color = top_colors[0][0]
-                color_kr = self._translate_color_to_korean(detected_color)
-                if color_kr and items:
-                    items[0] = items[0].replace(items[0].split()[0], color_kr)
         
         return items
     
