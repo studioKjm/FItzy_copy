@@ -5,6 +5,9 @@
 
 from config import MBTI_STYLES, SEASONAL_GUIDE, WEATHER_GUIDE
 
+# 공통 색상 리스트
+COMMON_COLORS = ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]
+
 class RecommendationEngine:
     """통합 코디 추천 엔진"""
     
@@ -269,9 +272,10 @@ class RecommendationEngine:
             
             # 상의 아이템 처리
             if "셔츠" in item or "티" in item or "상의" in item:
-                # 색상 추출
+                # 색상 추출 (공통 색상 리스트 사용)
                 color = None
-                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                common_colors = ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]
+                for c in common_colors:
                     if c in item:
                         color = c
                         break
@@ -282,25 +286,25 @@ class RecommendationEngine:
                 if gender == "남성":
                     if color:
                         enhanced_products.append(f"유니클로 U 크루넥 티셔츠 ({color})")
-                    else:
+                else:
                         enhanced_products.append("유니클로 U 크루넥 티셔츠")
                 else:
                     if color:
                         enhanced_products.append(f"자라 크롭 티셔츠 ({color})")
                     else:
                         enhanced_products.append("자라 크롭 티셔츠")
-            
+        
             # 재킷/코트 아이템 처리
             elif "재킷" in item or "코트" in item or "가디건" in item:
-                # 색상 추출
+                # 색상 추출 (공통 색상 리스트 사용)
                 color = None
-                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                for c in COMMON_COLORS:
                     if c in item:
                         color = c
                         break
                 
                 if "코트" in item:
-                    if gender == "남성":
+            if gender == "남성":
                         if color:
                             enhanced_products.append(f"코스 코트 ({color})")
                         else:
@@ -335,9 +339,9 @@ class RecommendationEngine:
             
             # 하의 아이템 처리
             elif "바지" in item or "하의" in item or "진" in item:
-                # 색상 추출
+                # 색상 추출 (공통 색상 리스트 사용)
                 color = None
-                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                for c in COMMON_COLORS:
                     if c in item:
                         color = c
                         break
@@ -346,19 +350,19 @@ class RecommendationEngine:
                     if color:
                         enhanced_products.append(f"리바이스 511 슬림진 ({color})")
                     else:
-                        enhanced_products.append("리바이스 511 슬림진")
+                enhanced_products.append("리바이스 511 슬림진")
                 else:
                     if color:
                         enhanced_products.append(f"H&M 하이웨스트 진 ({color})")
-                    else:
-                        enhanced_products.append("H&M 하이웨스트 진")
-            
+            else:
+                enhanced_products.append("H&M 하이웨스트 진")
+        
             # 신발 아이템 처리
             elif "부츠" in item or "스니커" in item or "신발" in item:
                 if "부츠" in item:
                     if gender == "남성":
                         enhanced_products.append("닥터마틴 1461")
-                    else:
+            else:
                         enhanced_products.append("찰스앤키스 앵클부츠")
                 elif "스니커" in item:
                     if gender == "남성":
@@ -374,9 +378,9 @@ class RecommendationEngine:
         # 아이템 기반 제품이 3개 미만이면 스타일 기반 제품으로 보완
         if len(enhanced_products) < 3:
             style_products = self.recommend_products(style, gender)
-            for product in style_products:
-                if product not in enhanced_products:
-                    enhanced_products.append(product)
+        for product in style_products:
+            if product not in enhanced_products:
+                enhanced_products.append(product)
                     if len(enhanced_products) >= 3:
                         break
         
@@ -527,7 +531,7 @@ class RecommendationEngine:
             elif top_color in ["흰색", "베이지"]:
                 bottom_color = "네이비" if top_color == "흰색" else "회색"
             else:
-                bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
+            bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
         elif style_priority == "season":
             # 계절 스타일: 계절 색상 우선
             seasonal_colors = seasonal_info.get("colors", [])
@@ -547,18 +551,9 @@ class RecommendationEngine:
                 top_color = "베이지"
                 bottom_color = "네이비"
         
-        # 색상을 한글 색상명으로 변환
-        color_map = {
-            "밝은색": "화이트", "파스텔": "파스텔", "컬러풀": "빨간색",
-            "강렬한색": "빨간색", "메탈릭": "회색", "다크톤": "검은색",
-            "스포티컬러": "네이비", "네이비": "네이비",
-            "뉴트럴": "베이지", "베이지": "베이지", "소프트톤": "베이지",
-            "블랙": "검은색", "모노톤": "검은색",
-            "어스톤": "갈색", "자연스러운컬러": "베이지",
-            "무채색": "회색", "심플톤": "회색", "그레이": "회색"
-        }
-        top_color = color_map.get(top_color, top_color)
-        bottom_color = color_map.get(bottom_color, bottom_color)
+        # 색상을 한글 색상명으로 변환 (공통 메서드 사용)
+        top_color = self._get_color_from_palette(mbti_style, seasonal_info, "top")
+        bottom_color = self._get_color_from_palette(mbti_style, seasonal_info, "bottom")
         
         # 온도 기반 기본 아이템
         if temp_guidance["layer"] == "다층":
@@ -584,50 +579,6 @@ class RecommendationEngine:
         
         return items
     
-    def _get_color_from_palette(self, mbti_style, seasonal_info, item_type):
-        """MBTI와 계절을 고려한 색상 선택"""
-        mbti_colors = mbti_style.get("colors", [])
-        seasonal_colors = seasonal_info.get("colors", [])
-        
-        color_map = {
-            "밝은색": "화이트", "파스텔": "파스텔", "컬러풀": "빨간색",
-            "강렬한색": "빨간색", "메탈릭": "회색", "다크톤": "검은색",
-            "스포티컬러": "네이비", "네이비": "네이비",
-            "뉴트럴": "베이지", "베이지": "베이지", "소프트톤": "베이지",
-            "블랙": "검은색", "모노톤": "검은색",
-            "어스톤": "갈색", "자연스러운컬러": "베이지",
-            "무채색": "회색", "심플톤": "회색", "그레이": "회색"
-        }
-        
-        if mbti_colors:
-            mbti_color = mbti_colors[0]
-            return color_map.get(mbti_color, mbti_color)
-        
-        if seasonal_colors:
-            seasonal_color = seasonal_colors[0]
-            return color_map.get(seasonal_color, seasonal_color)
-        
-        return "검은색" if item_type == "top" else "회색"
-    
-    def _translate_color_to_korean(self, color_text):
-        """색상 텍스트를 한글 색상명으로 변환"""
-        color_map = {
-            "red": "빨간색", "빨간색": "빨간색", "빨강": "빨간색",
-            "blue": "파란색", "파란색": "파란색", "파랑": "파란색",
-            "black": "검은색", "검은색": "검은색", "검정": "검은색",
-            "white": "흰색", "흰색": "흰색", "하얀색": "흰색",
-            "gray": "회색", "회색": "회색", "grey": "회색",
-            "brown": "갈색", "갈색": "갈색",
-            "beige": "베이지", "베이지": "베이지",
-            "navy": "네이비", "네이비": "네이비"
-        }
-        
-        color_lower = color_text.lower()
-        for en, kr in color_map.items():
-            if en.lower() in color_lower or color_lower in en.lower():
-                return kr
-        
-        return color_text
     
     def get_personalized_recommendation(self, mbti, temperature, weather, season,
                                        detected_items=None, style_analysis=None):

@@ -10,6 +10,7 @@ import torch
 from typing import Dict, List, Tuple, Optional
 from diffusers import StableDiffusionInpaintPipeline
 from diffusers import DPMSolverMultistepScheduler
+from .common_utils import get_device_info, extract_color_from_text, extract_color_bgr, COLOR_MAP
 
 
 class VirtualFittingSystem:
@@ -25,14 +26,11 @@ class VirtualFittingSystem:
         self.clip_analyzer = clip_analyzer
         self.inpaint_pipe = None  # inpainting 파이프라인 (필요 시 로드)
         
-        # MPS (GPU) 사용 가능 여부 확인
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            self.device = "mps"
-            self.vae_device = "cpu"
+        # 디바이스 설정 (공통 유틸리티 사용)
+        self.device, self.vae_device = get_device_info()
+        if self.device == "mps":
             print("🍎 MPS (GPU) 사용 가능 - 빠른 이미지 생성")
         else:
-            self.device = "cpu"
-            self.vae_device = "cpu"
             print("⚠️ MPS 사용 불가 - CPU 모드로 실행")
     
     def detect_clothing_regions(self, image: Image.Image) -> Dict:
@@ -656,15 +654,7 @@ class VirtualFittingSystem:
         Returns:
             Inpainting 프롬프트
         """
-        # 색상/타입 영어 변환
-        color_map = {
-            "검은색": "black", "검정": "black", "흰색": "white", "하얀색": "white",
-            "빨간색": "red", "빨강": "red", "파란색": "blue", "파랑": "blue",
-            "노란색": "yellow", "노랑": "yellow", "초록색": "green", "초록": "green",
-            "분홍색": "pink", "분홍": "pink", "보라색": "purple", "보라": "purple",
-            "회색": "gray", "회색톤": "gray", "갈색": "brown", "베이지": "beige",
-            "카키": "khaki", "네이비": "navy", "오렌지": "orange", "파스텔": "pastel"
-        }
+        # 색상 변환 (공통 유틸리티 사용)
         
         # 의류 타입 및 재질 변환
         item_map = {
@@ -689,26 +679,17 @@ class VirtualFittingSystem:
         
         # 변환
         en_item = item_text
-        
-        # 색상 추출 (더 정확하게)
-        extracted_colors = []
         item_text_lower = item_text.lower()
         
-        # 한글 색상명 먼저 확인
-        for kr, en in color_map.items():
+        # 색상 추출 (공통 유틸리티 사용)
+        extracted_color = extract_color_from_text(item_text)
+        if extracted_color:
+            # 색상명 제거하여 타입만 남김
+            for kr, en in COLOR_MAP.items():
             if kr in item_text:
-                extracted_colors.append(en)
-                # 색상명 제거하여 타입만 남김
-                en_item = en_item.replace(kr, "").strip()
-        
-        # 영어 색상명도 확인
-        if not extracted_colors:
-            for kr, en in color_map.items():
+                    en_item = en_item.replace(kr, "").strip()
                 if en.lower() in item_text_lower:
-                    extracted_colors.append(en)
                     en_item = en_item.replace(en, "").strip()
-        
-        extracted_color = extracted_colors[0] if extracted_colors else None
         
         # 의류 타입 추출 (더 정확하게)
         extracted_type = None
@@ -728,7 +709,7 @@ class VirtualFittingSystem:
                     else:
                         extracted_type = f"{extracted_type} {en}"
                 else:
-                    extracted_type = en
+                extracted_type = en
                 en_item = en_item.replace(kr, "")
         
         # 재질 추출
@@ -884,25 +865,7 @@ class VirtualFittingSystem:
         Returns:
             (B, G, R) 또는 None
         """
-        color_map_bgr = {
-            "검은색": (0, 0, 0),
-            "흰색": (255, 255, 255),
-            "빨간색": (0, 0, 255),
-            "파란색": (255, 0, 0),
-            "노란색": (0, 255, 255),
-            "초록색": (0, 255, 0),
-            "회색": (128, 128, 128),
-            "갈색": (42, 42, 165),
-            "베이지": (220, 245, 245),
-            "네이비": (128, 0, 0),
-            "분홍색": (203, 192, 255),
-        }
-        
-        for color_name, bgr in color_map_bgr.items():
-            if color_name in item_text:
-                return bgr
-        
-        return None
+        return extract_color_bgr(item_text)
     
     def _create_text_overlay_image(self, image: Image.Image, items: List[str]) -> Image.Image:
         """

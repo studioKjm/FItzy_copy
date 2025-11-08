@@ -240,7 +240,7 @@ def main():
             st.session_state.saved_debug_mode = False
         debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=st.session_state.saved_debug_mode, key="debug_mode_toggle")
         st.session_state.saved_debug_mode = debug_mode
-        
+
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
         if 'saved_temperature' not in st.session_state:
@@ -764,17 +764,17 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
         # 디버깅 정보
         print(f"DEBUG: outfit_data_list 길이: {len(outfit_data_list)}")
         
-        # 가상 피팅 모드: 업로드 이미지에 코디 합성
+            # 가상 피팅 모드: 업로드 이미지에 코디 합성
         # 중복 실행 방지: 처리 중인 작업 추적
         processing_key = f"virtual_fitting_processing_{st.session_state.get('last_image_hash', 'default')}"
         
-        for data in outfit_data_list:
-            with data["col"]:
+            for data in outfit_data_list:
+                with data["col"]:
                 # 캐시 키 개선: 아이템 리스트와 성별 포함
                 items_str = "_".join(data["outfit_desc"]["items"][:2])  # 상의+하의만
                 cache_key = f"virtual_fitting_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
-                
-                if cache_key not in st.session_state:
+                    
+                    if cache_key not in st.session_state:
                     # 추천 코디 1은 자동 생성, 2와 3은 버튼 클릭으로 생성
                     if data["idx"] == 0:
                         # 추천 코디 1: 자동 생성
@@ -894,10 +894,10 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                                     st.session_state[processing_key] = False
                         elif is_processing:
                             st.info("⏳ 다른 가상 피팅이 진행 중입니다. 완료 후 버튼을 클릭하여 생성해주세요.")
-                else:
-                    # 캐시된 이미지 사용
-                    cached_image = st.session_state[cache_key]
-                    st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                    else:
+                        # 캐시된 이미지 사용
+                        cached_image = st.session_state[cache_key]
+                        st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
                     st.success("✅ 가상 피팅 완료")
                     
                     # 프롬프트 표시 (fold 상태) - 캐시된 프롬프트가 있는 경우

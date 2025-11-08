@@ -78,7 +78,7 @@ Fitzy는 AI 기술을 활용한 개인화 패션 코디 추천 시스템입니�
 ## 🏗️ 프로젝트 구조
 
 ```
-FItzy_copy/
+FItzy/
 ├── app.py                          # 메인 Streamlit 애플리케이션
 ├── .fitzy_settings.json            # 설정값 영구 저장 파일
 ├── config.py                       # 설정 파일 (MBTI, 계절, 날씨 가이드)
@@ -95,7 +95,8 @@ FItzy_copy/
 │       ├── scoring_system.py          # 외모/패션 점수 평가 시스템
 │       ├── body_analysis.py           # 얼굴/체형 분석 (MediaPipe)
 │       ├── visualization.py           # YOLO 탐지 결과 시각화
-│       └── model_manager.py           # 모델 상태 관리
+│       ├── model_manager.py           # 모델 상태 관리
+│       └── common_utils.py            # 공통 유틸리티 (색상 변환, 디바이스 설정)
 │
 ├── models/
 │   └── weights/
@@ -197,11 +198,13 @@ FItzy_copy/
 ```
 
 **주요 메서드**:
-- `generate_unified_outfit_recommendations()`: 통합 추천 생성
-- `get_personalized_recommendation()`: 개인화 추천
+- `generate_unified_outfit_recommendations()`: 통합 추천 생성 (성별 + MBTI + 이미지 분석 + 온도/계절)
+- `get_personalized_recommendation()`: 개인화 추천 (기존 호환성 유지)
 - `_generate_recommendation_reason()`: MBTI/계절/날씨 연계 추천 이유 생성
-- `recommend_products()`: 구체적 제품 추천
-- `evaluate_current_outfit()`: 현재 코디 평가
+- `_generate_product_recommendations()`: 아이템 기반 제품 추천 (아이템에 정확히 맞는 제품)
+- `evaluate_current_outfit()`: 현재 코디 평가 (추천 이유와 연계)
+- `_get_color_from_palette()`: MBTI와 계절을 고려한 색상 선택
+- `_translate_color_to_korean()`: 색상 텍스트를 한글 색상명으로 변환
 
 ### 4. 얼굴/체형 분석 (BodyAnalyzer)
 
@@ -273,23 +276,27 @@ FItzy_copy/
    - TextEncoder: CPU
    - Scheduler: DPM Solver Multistep (빠르고 안정적)
    ↓
-4. 프롬프트 생성 (색상/타입 정확히 명시)
+4. 프롬프트 생성 (색상/타입 정확히 명시, 공통 유틸리티 사용)
    - "a man wearing a navy short sleeve t-shirt, EXACTLY navy color"
    - "realistic fit, naturally worn, proper draping"
+   - 공통 유틸리티(`extract_color_from_text`)로 색상 추출
    ↓
-5. Inpainting 실행 (12 inference steps, guidance_scale 7.5)
+5. Inpainting 실행 (11 inference steps for MPS, 7 for CPU, guidance_scale 7.5)
    - 마스크 영역만 새로운 의류로 교체
    - 나머지 영역은 원본 유지
    ↓
 6. 자연스러운 합성 결과 반환 (원본 크기 유지)
+   - 반환값: (이미지, 프롬프트 정보) 튜플
+   - 프롬프트 정보: 각 영역(상의/하의)별 프롬프트 포함
 ```
 
 **최적화 포인트**:
-- **MPS 백엔드**: Apple Silicon GPU 가속
+- **MPS 백엔드**: Apple Silicon GPU 가속 (공통 유틸리티 사용)
 - **DPM Solver 스케줄러**: PNDM 대신 사용 (더 빠르고 안정적)
-- **스텝 수 최적화**: 20 → 12 steps (속도 향상)
+- **스텝 수 최적화**: 20 → 11 steps (MPS) 또는 7 steps (CPU) (속도 향상, IndexError 방지)
 - **지연 로딩**: 첫 사용 시에만 모델 로드
-- **합성 시간**: 약 30-60초 (아이템당, M2 기준)
+- **합성 시간**: 약 9-10초 (아이템당, MPS 기준)
+- **프롬프트 정보 반환**: 각 영역별 프롬프트 정보 포함하여 사용자에게 표시
 
 ---
 
@@ -301,7 +308,13 @@ FItzy_copy/
 **주요 함수**:
 - `main()`: 메인 애플리케이션 로직
 - `display_outfit_recommendations()`: 코디 추천 결과 표시
+  - 추천 코디 1: 자동 생성
+  - 추천 코디 2, 3: 버튼 클릭으로 생성
+  - 프롬프트 정보 표시 (fold 상태)
 - `display_text_search_results()`: 텍스트 검색 결과 표시
+  - 성별별 아이템 반환
+  - 가상 피팅 이미지 생성 (버튼 클릭)
+  - 프롬프트 정보 표시 (fold 상태)
 - `display_trend_outfits()`: 트렌드 코디 표시
 - `display_model_manager()`: 모델 관리자 페이지
 - `render_gender_selector()`: 성별 선택 UI (자동 인식 포함)
@@ -320,6 +333,8 @@ AI 모델 통합 클래스
 - `WeatherBasedRecommender`: 날씨 기반 추천
 - `MBTIAnalyzer`: MBTI 기반 스타일 분석
 - `TextBasedSearcher`: CLIP 기반 텍스트 검색
+  - 성별별 아이템 반환 (남성/여성 구분)
+  - 카테고리별 아이템 매핑 (파티용, 출근룩, 데이트룩)
 - `FashionRecommender`: 통합 패션 추천 시스템
 
 ### `src/utils/recommendation_engine.py`
@@ -338,15 +353,30 @@ AI 모델 통합 클래스
 - `VirtualFittingSystem`: Stable Diffusion Inpainting 기반 가상 피팅
   - YOLO 기반 의류 영역 탐지
   - Inpainting으로 실제 의류 합성
-  - MPS 최적화
-  - DPM Solver 스케줄러 사용
+  - MPS 최적화 (공통 유틸리티 사용)
+  - DPM Solver 스케줄러 사용 (11 steps for MPS, 7 steps for CPU)
+  - 프롬프트 정보 반환 (이미지, 프롬프트 정보 튜플)
+  - 색상 변환 로직 (공통 유틸리티 사용)
 
 ### `src/utils/scoring_system.py`
 점수 평가 시스템
 
 **클래스**:
 - `ScoringSystem`: 기본 점수 평가
-- `EnhancedScoringSystem`: 향상된 점수 평가 (K-means, CLIP 임베딩)
+  - `score_appearance()`: 외모 점수 평가
+  - `score_fashion()`: 패션 점수 평가
+  - `get_score_label()`: 점수 레이블 반환
+  - `get_detailed_feedback()`: 상세 피드백 생성
+
+### `src/utils/common_utils.py`
+공통 유틸리티 함수
+
+**주요 함수**:
+- `get_device_info()`: 디바이스 정보 반환 (MPS 우선, CPU 폴백)
+- `extract_color_from_text()`: 텍스트에서 색상 추출 (한글/영어)
+- `extract_color_bgr()`: 텍스트에서 색상 추출 (BGR 형식)
+- `translate_color_to_english()`: 한글 색상명을 영어로 변환
+- `COLOR_MAP`: 색상 변환 맵 (한글 → 영어)
 
 ### `src/utils/body_analysis.py`
 얼굴/체형 분석
@@ -434,12 +464,22 @@ AI 모델 통합 클래스
 - 정확도: mAP 개선 (학습 진행 중)
 
 ### 4. 코드 간소화 및 리팩토링
-- AI 이미지 생성 기능 제거 (가상 피팅만 사용)
-- 롤모델 스타일 참고 기능 제거
-- 추천 화장법 기능 제거
-- 설정값 영구 저장 기능 추가 (`.fitzy_settings.json`)
-- 추천 이유 생성 로직 개선 (MBTI/계절/날씨 연계 상세 설명)
-- 중복 코드 제거, 함수 재사용
+- **사용하지 않는 코드 제거**:
+  - `image_generator.py` 삭제 (사용되지 않음)
+  - `enhanced_scorer` 관련 코드 제거 (항상 비활성화)
+- **공통 유틸리티 생성**:
+  - `common_utils.py` 추가: 색상 변환, 디바이스 설정 등 재사용 가능한 함수
+  - 중복된 색상 변환 로직 통합
+  - 디바이스 설정 로직 통합
+- **기능 개선**:
+  - 설정값 영구 저장 기능 추가 (`.fitzy_settings.json`)
+  - 추천 이유 생성 로직 개선 (MBTI/계절/날씨 연계 상세 설명)
+  - "이 조합이 어울리는 이유"와 "현재 코디 평가" 통합
+  - 프롬프트 정보 표시 기능 추가 (fold 상태)
+- **UI/UX 개선**:
+  - 추천 코디 1은 자동 생성, 2와 3은 버튼 클릭으로 생성
+  - 텍스트 검색에서 성별별 아이템 반환
+  - 이미지 생성 중 다른 탭 블로킹 방지
 
 ---
 
@@ -452,9 +492,10 @@ AI 모델 통합 클래스
 
 ### 가상 피팅
 - **첫 로드 시간**: 약 5-10초 (모델 로드)
-- **합성 시간**: 약 30-60초 (아이템당 12 inference steps)
+- **합성 시간**: 약 9-10초 (아이템당, MPS 기준, 11 inference steps)
 - **이미지 크기**: 원본 크기 유지 (최대 512px로 리사이즈)
 - **메모리 사용**: 약 5GB (모델 크기)
+- **프롬프트 정보**: 각 이미지 생성 시 사용된 프롬프트 표시 (fold 상태)
 
 ### 시스템 요구사항
 - **최소 메모리**: 8GB RAM
@@ -478,13 +519,19 @@ AI 모델 통합 클래스
    - 얼굴/체형 분석 결과
    - 외모/패션 점수 (접힌 상태)
    - 추천 코디 3가지 (각각 다른 색상/스타일)
-   - 가상 피팅 이미지 (업로드 이미지에 합성)
+   - 가상 피팅 이미지:
+     - 추천 코디 1: 자동 생성
+     - 추천 코디 2, 3: 버튼 클릭으로 생성
+     - 각 이미지에 사용된 프롬프트 정보 표시 (fold 상태)
    - 이 조합이 어울리는 이유 (MBTI/계절/날씨 연계 설명)
-   - 현재 코디 평가
+   - 현재 코디 평가 (추천 이유와 연계)
 
 3. **텍스트 검색 탭**:
-   - 키워드 검색
+   - 키워드 검색 ("파티용 코디", "출근룩", "데이트룩" 등)
    - 빠른 선택 버튼
+   - 성별별 아이템 반환 (남성/여성 구분)
+   - 가상 피팅 이미지 생성 (버튼 클릭, 이미지 분석 섹션의 이미지와 설정값 사용)
+   - 사용된 프롬프트 정보 표시 (fold 상태)
 
 4. **트렌드 코디 탭**:
    - 계절별 인기 코디
@@ -501,6 +548,10 @@ AI 모델 통합 클래스
 - 진단 모드로 YOLO/CLIP 분석 결과 시각화
 - MBTI/계절/날씨 연계 추천 이유 상세 설명
 - 추천 코디 3개 각각 다른 색상/스타일로 다양성 확보
+- 추천 코디 1은 자동 생성, 2와 3은 버튼 클릭으로 생성 (성능 최적화)
+- 이미지 생성 중 다른 탭 블로킹 방지 (비동기 처리)
+- 프롬프트 정보 표시 (사용자가 생성 과정 이해 가능)
+- 텍스트 검색에서 성별별 맞춤 아이템 반환
 
 ---
 
@@ -605,17 +656,15 @@ Local URL: http://localhost:8501
    - 해결책: 프롬프트에 "EXACTLY {color} color" 명시, DPM Solver 스케줄러 사용
 2. **YOLOv5 분류 정확도**: 반팔/긴팔 등 세부 분류가 부정확할 수 있음
    - 해결책: CLIP 후처리 검증으로 보완
-3. **PNDM 스케줄러 오류**: IndexError 발생 가능
-   - 해결책: DPM Solver Multistep 스케줄러로 교체 완료
-
 ---
 
 ## 🚧 향후 개선 사항
 
 ### 단기 목표
 1. **YOLOv5 모델 학습 완료**: 100 epochs까지 학습하여 정확도 향상
-2. **가상 피팅 속도 개선**: inference steps 최적화 (현재 12 steps)
+2. **가상 피팅 속도 개선**: inference steps 최적화 (현재 11 steps for MPS, 7 steps for CPU)
 3. **색상 정확도 향상**: ControlNet 또는 fine-tuning 적용
+4. **코드 품질 개선**: ✅ 완료 - 중복 코드 제거, 공통 유틸리티 생성
 
 ### 중기 목표
 1. **DeepFashion2 전체 데이터셋 학습**: 더 많은 클래스 지원
@@ -653,21 +702,13 @@ Local URL: http://localhost:8501
 **프로젝트명**: Fitzy  
 **버전**: 1.0.0  
 **개발 환경**: macOS, Python 3.12, Apple Silicon M2  
-**라이선스**: MIT (추정)  
-**마지막 업데이트**: 2025-11-03  
+**라이선스**: MIT 
+**마지막 업데이트**: 2025-11-10  
 
 ---
 
-## 📞 문의 및 지원
-
-이슈 발생 시:
-1. 진단 모드를 활성화하여 YOLO/CLIP 분석 결과 확인
-2. 모델 관리 탭에서 시스템 정보 확인
-3. 로그 및 에러 메시지 수집
-
----
-
-**문서 작성일**: 2025-11-03  
+**문서 작성일**: 2025-11-10  
 **작성자**: AI Assistant  
-**문서 버전**: 1.0
+**문서 버전**: 1.1
+
 

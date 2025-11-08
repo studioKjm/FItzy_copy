@@ -25,7 +25,7 @@
 **단점**:
 - ⏱️ 느림 (아이템당 약 20-30초)
 - 💾 첫 실행 시 모델 다운로드 (약 5GB)
-- ⚠️ 여전히 색상 정확도 한계 (Stable Diffusion 특성)
+- ⚠️ 색상 정확도 한계 (Stable Diffusion 특성)
 
 ### 2. 색상 오버레이 (폴백)
 **사용 라이브러리**: OpenCV, NumPy
@@ -74,9 +74,12 @@ streamlit run app.py
 - ❌ 의류가 겹쳐진 경우
 
 ### 3. 결과 확인
-- 추천 코디 3개 각각 아래에 가상 피팅 이미지 출력
-- 처리 시간: Inpainting 모드 약 30-60초 (아이템당), 색상 오버레이 모드 <1초
+- **추천 코디 1**: 자동으로 가상 피팅 이미지 생성
+- **추천 코디 2, 3**: "🎨 {스타일} 스타일 가상 피팅 생성" 버튼 클릭으로 생성
+- 각 이미지 아래에 "📝 사용된 프롬프트 보기" expander로 프롬프트 확인 가능
+- 처리 시간: Inpainting 모드 약 9-10초 (아이템당, MPS 기준), 색상 오버레이 모드 <1초
 - "이 조합이 어울리는 이유" 섹션에서 MBTI, 계절, 날씨 등을 연계한 상세 설명 확인
+- "현재 코디 평가" 섹션에서 추천 이유와 연계된 평가 확인
 
 ---
 
@@ -113,15 +116,19 @@ SD Inpainting 실행
 
 ```python
 self.inpaint_pipe(
-    prompt="{gender} wearing {item}, EXACTLY {color} color, realistic clothing, high quality",
-    negative_prompt="face, head, portrait, person, wrong colors, blurry",
+    prompt="a {gender} wearing a {color} {type}, EXACTLY {color} color, {fabric} fabric, realistic fit, naturally worn, proper draping, natural folds, realistic lighting, natural shadows, high quality photo, professional photography, authentic clothing texture",
+    negative_prompt="face, head, portrait, person, wrong colors, blurry, ...",
     image=original_image,      # 원본 이미지
     mask_image=mask,            # 교체할 영역 (흰색)
-    num_inference_steps=12,     # DPM Solver 사용 (빠르고 안정적)
+    num_inference_steps=11,     # DPM Solver 사용 (MPS 기준, CPU는 7)
     guidance_scale=7.5,         # 프롬프트 준수도
     strength=0.85               # 85% 변경, 15% 원본 유지
 )
 ```
+
+**반환값**:
+- `(이미지, 프롬프트 정보)` 튜플
+- 프롬프트 정보: 각 영역(상의/하의)별 프롬프트 포함
 
 ---
 
@@ -136,8 +143,10 @@ self.inpaint_pipe(
 - 약 70-80% 정확도 (완벽하지 않음)
 
 ### 3. 처리 속도
-- Inpainting: 아이템당 약 30-60초 (DPM Solver 스케줄러 사용)
-- 3개 코디 모두 생성 시 약 2-3분 소요
+- Inpainting: 아이템당 약 9-10초 (MPS 기준, 11 inference steps)
+- CPU 모드: 아이템당 약 7-8초 (7 inference steps)
+- 추천 코디 1만 자동 생성되므로 초기 로딩 시간 단축
+- 추천 코디 2, 3은 버튼 클릭 시에만 생성 (필요 시에만 처리)
 
 ### 4. 메모리 사용
 - Inpainting 모델: 약 5GB
@@ -225,13 +234,14 @@ self.inpaint_pipe(
 
 ## 📊 성능 비교
 
-| 항목 | SD Inpainting (현재) | 색상 오버레이 (폴백) | SD 생성 (이전) |
-|------|---------------------|-------------------|---------------|
-| **속도** | ⭐⭐⭐ (30-60초) | ⭐⭐⭐⭐⭐ (<1초) | - |
-| **색상 정확도** | ⭐⭐⭐ (70-80%) | ⭐⭐⭐⭐⭐ (100%) | ⭐⭐ (50-70%) |
-| **질감 표현** | ⭐⭐⭐⭐ (자연스러움) | ⭐ (없음) | ⭐⭐⭐ (부자연스러움) |
-| **얼굴 유지** | ⭐⭐⭐⭐⭐ (완벽) | ⭐⭐⭐⭐⭐ (완벽) | - |
-| **메모리** | 5GB | <100MB | - |
+| 항목 | SD Inpainting (현재) | 색상 오버레이 (폴백) |
+|------|---------------------|-------------------|
+| **속도** | ⭐⭐⭐⭐ (9-10초, MPS) | ⭐⭐⭐⭐⭐ (<1초) |
+| **색상 정확도** | ⭐⭐⭐ (70-80%) | ⭐⭐⭐⭐⭐ (100%) |
+| **질감 표현** | ⭐⭐⭐⭐ (자연스러움) | ⭐ (없음) |
+| **얼굴 유지** | ⭐⭐⭐⭐⭐ (완벽) | ⭐⭐⭐⭐⭐ (완벽) |
+| **메모리** | 5GB | <100MB |
+| **프롬프트 표시** | ⭐⭐⭐⭐⭐ (각 영역별 표시) | - |
 
 ---
 
@@ -240,9 +250,11 @@ self.inpaint_pipe(
 ### 단기
 1. ✅ Inpainting 통합 (완료)
 2. ✅ DPM Solver 스케줄러 적용 (완료)
-3. ✅ 스텝 수 최적화 (20 → 12 steps, 완료)
-4. ⬜ 2개 아이템 동시 처리 (현재 1개만)
-5. ⬜ 캐싱 최적화
+3. ✅ 스텝 수 최적화 (12 → 11 steps for MPS, 7 steps for CPU, 완료)
+4. ✅ 프롬프트 정보 반환 및 표시 (완료)
+5. ✅ 추천 코디 1 자동 생성, 2와 3 버튼 클릭 (완료)
+6. ⬜ 2개 아이템 동시 처리 (현재 1개만)
+7. ⬜ 캐싱 최적화
 
 ### 중기
 1. ⬜ Segmentation 기반 정밀 마스킹
@@ -269,14 +281,20 @@ self.inpaint_pipe(
 - 밝은 조명의 이미지를 사용하세요
 - 단순한 배경이 이상적입니다
 
-⏱️ 처리 시간: 약 30-60초 (아이템당)
+⏱️ 처리 시간: 약 9-10초 (아이템당, MPS 기준)
 🎨 실제 의류 질감까지 자연스럽게 합성됩니다
+📝 각 이미지에 사용된 프롬프트를 확인할 수 있습니다
 ```
 
 ---
 
-**작성일**: 2025-11-03  
+**작성일**: 2025-01-11  
 **모델**: Stable Diffusion 2 Inpainting (DPM Solver Multistep Scheduler)  
-**환경**: M2 MacBook, 8GB Memory  
-**최적화**: 12 inference steps, guidance_scale 7.5
+**환경**: M2 MacBook, 8GB Memory
+**최적화**: 11 inference steps (MPS), 7 inference steps (CPU), guidance_scale 7.5
+**주요 변경사항**:
+- 프롬프트 정보 반환 및 표시 기능 추가
+- 추천 코디 1 자동 생성, 2와 3 버튼 클릭으로 변경
+- 공통 유틸리티 사용 (색상 변환, 디바이스 설정)
+- IndexError 해결 (스텝 수 조정)
 

@@ -14,17 +14,6 @@ class ScoringSystem:
     
     def score_appearance(self, face_info: dict, body_info: dict, image: Image.Image = None) -> dict:
         """외모 점수 평가"""
-        # 기본 점수 계산
-        if False:  # enhanced_scorer 비활성화
-            try:
-                return self.enhanced_scorer.calculate_enhanced_appearance_score(
-                    face_info, body_info, image
-                )
-            except Exception:
-                # 실패 시 기본 시스템 사용
-                pass
-        
-        # 기본 점수 계산 시스템
         scores = {
             "얼굴": 0,
             "체형": 0,
@@ -140,17 +129,6 @@ class ScoringSystem:
                      weather: str, season: str, temperature: float = None,
                      image: Image.Image = None) -> dict:
         """패션 점수 평가"""
-        # 기본 점수 계산
-        if False:  # enhanced_scorer 비활성화
-            try:
-                return self.enhanced_scorer.calculate_enhanced_fashion_score(
-                    detected_items, style_analysis, weather, season, temperature, image
-                )
-            except Exception:
-                # 실패 시 기본 시스템 사용
-                pass
-        
-        # 기본 점수 계산 시스템
         scores = {
             "아이템 구성": 0,
             "스타일 일치도": 0,
