@@ -102,12 +102,6 @@ def detect_gender_from_image(image, clip_analyzer, result=None):
 
 # ==================== 공통 UI 함수 ====================
 
-def show_image_generation_error_guide():
-    """이미지 생성 실패 시 표시할 문제 해결 가이드"""
-    st.markdown("""
-    ### ⚠️ **이미지 생성 실패**
-    """)
-
 def display_score_metric(label, score, delta_label="점수"):
     """점수 메트릭 표시 (재사용 함수)"""
     st.metric(label, f"{score}/100", 
@@ -207,80 +201,6 @@ def render_outfit_items_display(idx, recommendations, image_suggestions, has_ima
     
     return displayed_items
 
-def handle_image_generation(outfit_desc, style, idx, recommendations, cache_key):
-    """이미지 생성 처리 (재사용 함수)"""
-    try:
-        from src.utils.image_generator import OutfitImageGenerator
-        
-        # stable_diffusion만 사용
-        if 'image_generator' not in st.session_state:
-            st.session_state.image_generator = OutfitImageGenerator(method="stable_diffusion")
-        
-        # enable_ai_images가 True이면 자동 생성으로 간주
-        num_auto_images = st.session_state.get("num_auto_images", 1)
-        should_auto_generate = idx < num_auto_images
-        
-        if should_auto_generate:
-            if cache_key not in st.session_state:
-                # 이미지 생성 전 placeholder 생성 (블러 처리)
-                image_placeholder = st.empty()
-                from PIL import Image as PILImage, ImageFilter
-                placeholder_img = PILImage.new('RGB', (512, 512), color=(240, 240, 240))
-                blurred_placeholder = placeholder_img.filter(ImageFilter.GaussianBlur(radius=10))
-                image_placeholder.image(blurred_placeholder, caption=f"{style} 스타일 AI 생성 이미지 (생성 중...)", width='stretch')
-                
-                with st.spinner(f"🎨 {style} 스타일 AI 이미지 생성 중... (10-30초 소요)"):
-                    generated_image = st.session_state.image_generator.generate_outfit_image(
-                        outfit_desc, style_info=recommendations
-                    )
-                    if generated_image:
-                        st.session_state[cache_key] = generated_image
-                        image_placeholder.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
-                        st.success("✅ 이미지 생성 완료")
-                        return True
-                    else:
-                        image_placeholder.empty()
-                        st.warning("⚠️ 이미지 생성 실패")
-                        with st.expander("🔍 문제 해결 가이드", expanded=True):
-                            show_image_generation_error_guide()
-                        return False
-            else:
-                cached_image = st.session_state[cache_key]
-                st.image(cached_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
-                st.success("✅ 이미지 생성 완료 (캐시)")
-                return True
-        else:
-            gen_button_key = f"generate_image_{idx}"
-            if st.button(f"🎨 {style} 스타일 이미지 생성", key=gen_button_key):
-                # 이미지 생성 전 placeholder (블러 처리)
-                image_placeholder = st.empty()
-                from PIL import Image as PILImage, ImageFilter
-                placeholder_img = PILImage.new('RGB', (512, 512), color=(240, 240, 240))
-                blurred_placeholder = placeholder_img.filter(ImageFilter.GaussianBlur(radius=10))
-                image_placeholder.image(blurred_placeholder, caption=f"{style} 스타일 AI 생성 이미지 (생성 중...)", width='stretch')
-                
-                with st.spinner(f"AI 이미지 생성 중... (10-30초 소요)"):
-                    generated_image = st.session_state.image_generator.generate_outfit_image(
-                        outfit_desc, style_info=recommendations
-                    )
-                    if generated_image:
-                        st.session_state[cache_key] = generated_image
-                        image_placeholder.image(generated_image, caption=f"{style} 스타일 AI 생성 이미지", width='stretch')
-                        st.success("✅ 이미지 생성 완료")
-                        return True
-                    else:
-                        image_placeholder.empty()
-                        st.warning("⚠️ 이미지 생성 실패")
-                        with st.expander("🔍 문제 해결 가이드", expanded=True):
-                            show_image_generation_error_guide()
-                        return False
-    except ImportError:
-        st.caption("💡 AI 이미지 생성을 사용하려면 `pip install diffusers` 또는 API 키 설정이 필요합니다.")
-        return False
-    except Exception as e:
-        st.caption(f"💡 이미지 생성 기능 준비 중: {str(e)[:50]}")
-        return False
-
 def main():
     """메인 애플리케이션 함수"""
     st.title("👗 Fitzy - AI 패션 코디 추천")
@@ -321,44 +241,6 @@ def main():
         debug_mode = st.toggle("🔍 진단 모드 (YOLO/CLIP 상세 분석)", value=st.session_state.saved_debug_mode, key="debug_mode_toggle")
         st.session_state.saved_debug_mode = debug_mode
         
-        # AI 이미지 생성 설정 (선택적)
-        with st.expander("🎨 AI 이미지 생성 설정", expanded=False):
-            # 초기화 (한 번만)
-            if 'fitting_mode' not in st.session_state:
-                st.session_state.fitting_mode = "가상 피팅 (추천)"
-            if 'enable_ai_images' not in st.session_state:
-                st.session_state.enable_ai_images = False  # 기본 비활성화
-            if 'num_auto_images' not in st.session_state:
-                st.session_state.num_auto_images = 1
-            
-            # 가상 피팅 모드 선택
-            st.radio(
-                "이미지 생성 방식",
-                ["가상 피팅 (추천)", "AI 생성 (실험적)"],
-                key="fitting_mode",
-                help="가상 피팅: 업로드한 이미지에 추천 코디 합성 (빠르고 정확)\nAI 생성: Stable Diffusion (느리고 부정확할 수 있음)"
-            )
-            
-            if st.session_state.get("fitting_mode") == "AI 생성 (실험적)":
-                enable_ai_images = st.toggle(
-                    "⚠️ AI 이미지 생성 (실험적, 부정확할 수 있음)", 
-                    key="enable_ai_images"
-                )
-                
-                if enable_ai_images:
-                    st.warning("⚠️ AI 생성 이미지는 색상/아이템이 부정확할 수 있습니다.")
-                    # 생성할 이미지 개수 선택
-                    num_auto_images = st.slider(
-                        "자동 생성할 이미지 개수 (추천 코디 중)",
-                        min_value=1,
-                        max_value=3,
-                        key="num_auto_images",
-                        help="추천 코디 3개 중 몇 개의 이미지를 자동 생성할지 선택"
-                    )
-            else:
-                # 가상 피팅 모드
-                st.success("✅ 가상 피팅 모드 (업로드 이미지에 추천 코디 합성)")
-
         # 날씨 정보 입력
         st.subheader("🌤️ 날씨 정보")
         if 'saved_temperature' not in st.session_state:
@@ -869,100 +751,60 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     "cache_key": cache_key
                 })
     
-    # 모든 코디 텍스트 출력 완료 후 이미지 생성/합성
+    # 모든 코디 텍스트 출력 완료 후 가상 피팅 합성
     if outfit_data_list:
-        fitting_mode = st.session_state.get("fitting_mode", "가상 피팅 (추천)")
-        
         # 디버깅 정보
         print(f"DEBUG: outfit_data_list 길이: {len(outfit_data_list)}")
-        print(f"DEBUG: fitting_mode: {fitting_mode}")
         
-        if fitting_mode == "가상 피팅 (추천)":
-            # 가상 피팅 모드: 업로드 이미지에 코디 합성
-            # 중복 실행 방지: 처리 중인 작업 추적
-            processing_key = f"virtual_fitting_processing_{st.session_state.get('last_image_hash', 'default')}"
-            
-            for data in outfit_data_list:
-                with data["col"]:
-                    # 캐시 키 개선: 아이템 리스트와 성별 포함
-                    items_str = "_".join(data["outfit_desc"]["items"][:2])  # 상의+하의만
-                    cache_key = f"virtual_fitting_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
+        # 가상 피팅 모드: 업로드 이미지에 코디 합성
+        # 중복 실행 방지: 처리 중인 작업 추적
+        processing_key = f"virtual_fitting_processing_{st.session_state.get('last_image_hash', 'default')}"
+        
+        for data in outfit_data_list:
+            with data["col"]:
+                # 캐시 키 개선: 아이템 리스트와 성별 포함
+                items_str = "_".join(data["outfit_desc"]["items"][:2])  # 상의+하의만
+                cache_key = f"virtual_fitting_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
+                
+                if cache_key not in st.session_state:
+                    # 처리 중인지 확인
+                    if st.session_state.get(processing_key, False):
+                        st.info("⏳ 다른 가상 피팅이 진행 중입니다. 잠시만 기다려주세요...")
+                        continue
                     
-                    if cache_key not in st.session_state:
-                        # 처리 중인지 확인
-                        if st.session_state.get(processing_key, False):
-                            st.info("⏳ 다른 가상 피팅이 진행 중입니다. 잠시만 기다려주세요...")
-                            continue
-                        
-                        # 처리 시작 플래그 설정
-                        st.session_state[processing_key] = True
-                        
-                        try:
-                            with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
-                                # 원본 이미지 사용 (user_uploaded_image 또는 image)
-                                source_image = user_uploaded_image if user_uploaded_image is not None else image
-                                fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
-                                    source_image,
-                                    data["outfit_desc"]["items"],
-                                    data["outfit_desc"]["gender"]
-                                )
-                                
-                                if fitted_image:
-                                    st.session_state[cache_key] = fitted_image
-                                    st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
-                                    st.success("✅ 가상 피팅 완료")
-                                else:
-                                    st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
-                        finally:
-                            # 처리 완료 플래그 해제
-                            st.session_state[processing_key] = False
-                    else:
-                        # 캐시된 이미지 사용
-                        cached_image = st.session_state[cache_key]
-                        st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
-                        st.success("✅ 가상 피팅 완료 (캐시)")
-        else:
-            # AI 생성 모드
-            for data in outfit_data_list:
-                with data["col"]:
-                    handle_image_generation(
-                        data["outfit_desc"], 
-                        data["style"], 
-                        data["idx"], 
-                        recommendations, 
-                        data["cache_key"]
-                    )
+                    # 처리 시작 플래그 설정
+                    st.session_state[processing_key] = True
+                    
+                    try:
+                        with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
+                            # 원본 이미지 사용 (user_uploaded_image 또는 image)
+                            source_image = user_uploaded_image if user_uploaded_image is not None else image
+                            fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
+                                source_image,
+                                data["outfit_desc"]["items"],
+                                data["outfit_desc"]["gender"]
+                            )
+                            
+                            if fitted_image:
+                                st.session_state[cache_key] = fitted_image
+                                st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                                st.success("✅ 가상 피팅 완료")
+                            else:
+                                st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                    finally:
+                        # 처리 완료 플래그 해제
+                        st.session_state[processing_key] = False
+                else:
+                    # 캐시된 이미지 사용
+                    cached_image = st.session_state[cache_key]
+                    st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                    st.success("✅ 가상 피팅 완료 (캐시)")
     
     # 추천 이유
     st.subheader("💡 이 조합이 어울리는 이유")
     for reason in recommendations['recommendation_reason']:
         st.write(reason)
     
-    # 롤모델 및 화장법
-    st.subheader("🌟 롤모델 스타일 참고")
-    if outfit_styles:
-        for style in outfit_styles:
-            celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(style)
-            st.write(f"**{style} 스타일:** {celebrity}")
-    else:
-        # 기본 스타일 사용
-        default_styles = ["캐주얼", "포멀", "트렌디"]
-        for style in default_styles:
-            celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(style)
-            st.write(f"**{style} 스타일:** {celebrity}")
-    
-    st.subheader("💄 추천 화장법")
-    if outfit_styles:
-        for style in outfit_styles:
-            makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
-            st.write(f"**{style} 스타일:** {makeup}")
-    else:
-        # 기본 스타일 사용
-        default_styles = ["캐주얼", "포멀", "트렌디"]
-        for style in default_styles:
-            makeup = st.session_state.recommendation_engine.get_makeup_suggestions(style, mbti)
-            st.write(f"**{style} 스타일:** {makeup}")
-
     # 얼굴/체형 기반 개인화 추천
     if face_info and body_info:
         body_recommendations = st.session_state.body_analyzer.get_recommendation_based_on_body(
@@ -1015,14 +857,6 @@ def display_text_search_results(query, mbti):
     if mbti in MBTI_STYLES:
         st.info(f"💡 {mbti} 유형을 위해 {MBTI_STYLES[mbti]['style']} 요소가 추가로 반영되었습니다.")
     
-    # 롤모델 및 화장법
-    st.subheader("🌟 관련 롤모델")
-    celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference(results['category'])
-    st.write(celebrity)
-    
-    st.subheader("💄 추천 화장법")
-    makeup = st.session_state.recommendation_engine.get_makeup_suggestions(results['category'], mbti)
-    st.write(makeup)
 
 def display_trend_outfits(season):
     """트렌드 코디 표시"""
@@ -1073,8 +907,6 @@ def display_trend_outfits(season):
             st.write(f"**스타일:** {trend_item}")
             st.write(f"**추천 컬러:** {trend['colors'][i-1] if i <= len(trend['colors']) else trend['colors'][0]}")
             st.write(f"**계절:** {season}")
-            celebrity = st.session_state.recommendation_engine.get_celebrity_style_reference("트렌디")
-            st.write(f"**참고 스타일:** {celebrity}")
 
 def display_model_manager():
     """모델 관리자 페이지"""

@@ -73,7 +73,8 @@ class RecommendationEngine:
         
         # 7. 추천 이유 생성
         recommendation_reason = self._generate_recommendation_reason(
-            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions,
+            gender=gender, mbti=mbti, season=season
         )
         
         return {
@@ -362,7 +363,8 @@ class RecommendationEngine:
         
         # 7. 추천 이유 생성
         recommendation_reason = self._generate_recommendation_reason(
-            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions
+            mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions,
+            gender=gender, mbti=mbti, season=season
         )
         
         return {
@@ -606,7 +608,7 @@ class RecommendationEngine:
             "image_suggestions": image_based_suggestions,
             "recommendation_reason": self._generate_recommendation_reason(
                 mbti_style, seasonal_info, weather_info, temp_guidance,
-                image_based_suggestions
+                image_based_suggestions, gender=None, mbti=mbti, season=season
             )
         }
     
@@ -831,42 +833,58 @@ class RecommendationEngine:
         else:
             return {"layer": "최소", "material": "린넨", "mood": "시원하고 가벼운"}
     
-    def _generate_recommendation_reason(self, mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions=None):
-        """추천 이유 생성 (이미지 분석 결과 포함)"""
-        reasons = [
-            f"• {mbti_style['style']} 스타일로 {mbti_style['mood']}한 분위기 연출",
-            f"• {seasonal_info['mood']}한 {seasonal_info['colors'][0]} 컬러 조합",
-            f"• {weather_info['mood']}한 {weather_info['accessories'][0]} 액세서리 추천",
-            f"• {temp_guidance['mood']}한 {temp_guidance['material']} 소재 활용"
-        ]
+    def _generate_recommendation_reason(self, mbti_style, seasonal_info, weather_info, temp_guidance, image_suggestions=None, gender=None, mbti=None, season=None):
+        """추천 이유 생성 (MBTI, 계절 등을 연계한 상세 설명)"""
+        reasons = []
+        
+        # MBTI 기반 설명
+        if mbti and mbti_style:
+            mbti_desc = mbti_style.get('description', '')
+            mbti_mood = mbti_style.get('mood', '')
+            reasons.append(f"• **{mbti} 유형**의 {mbti_style['style']} 특성에 맞춰 {mbti_mood}한 분위기를 연출합니다. {mbti_desc}")
+        
+        # 계절 기반 설명
+        if season and seasonal_info:
+            season_colors = ', '.join(seasonal_info.get('colors', [])[:2]) if seasonal_info.get('colors') else seasonal_info.get('colors', [''])[0]
+            season_materials = seasonal_info.get('materials', [])
+            season_mood = seasonal_info.get('mood', '')
+            material_text = f"{season_materials[0]} 소재" if season_materials else "적절한 소재"
+            reasons.append(f"• **{season}** 계절에 어울리는 {season_mood}한 {season_colors} 톤의 {material_text}를 활용하여 계절감을 살렸습니다.")
+        
+        # 날씨 기반 설명
+        if weather_info:
+            weather_mood = weather_info.get('mood', '')
+            weather_accessories = weather_info.get('accessories', [])
+            if weather_accessories:
+                reasons.append(f"• **{weather_info.get('weather', '')}** 날씨에 적합한 {weather_mood}한 스타일로 {weather_accessories[0]} 같은 액세서리와 함께 착용하면 더욱 완성도 높은 코디가 됩니다.")
+        
+        # 온도 기반 설명
+        if temp_guidance:
+            temp_mood = temp_guidance.get('mood', '')
+            temp_material = temp_guidance.get('material', '')
+            temp_layer = temp_guidance.get('layer', '')
+            layer_desc = {
+                "다층": "겹쳐 입기",
+                "중간": "적절한 레이어링",
+                "단일": "심플한 구성",
+                "최소": "미니멀한 스타일"
+            }
+            reasons.append(f"• 현재 온도에 맞춰 {temp_mood}한 {temp_material} 소재를 {layer_desc.get(temp_layer, '적절히')} 활용하여 실용성과 스타일을 모두 고려했습니다.")
         
         # 이미지 분석 결과 기반 이유 추가
         if image_suggestions:
             detected_info = image_suggestions.get("detected_items_info", [])
             if detected_info:
                 detected_names = [item["item"] for item in detected_info[:2]]
-                reasons.append(f"• 현재 착용 중인 {', '.join(detected_names)}와 조화로운 코디")
+                reasons.append(f"• 현재 착용 중인 **{', '.join(detected_names)}**와 조화롭게 어울리도록 색상과 스타일을 조정했습니다.")
+            
+            # 색상 매칭 정보
+            color_matches = image_suggestions.get("color_matches", {})
+            if color_matches:
+                top_colors = sorted(color_matches.items(), key=lambda x: x[1], reverse=True)[:2]
+                if top_colors:
+                    color_names = [color[0] for color in top_colors]
+                    reasons.append(f"• 이미지에서 감지된 **{', '.join(color_names)}** 톤을 활용하여 자연스러운 색상 조화를 이루었습니다.")
         
         return reasons
     
-    def get_celebrity_style_reference(self, outfit_style):
-        """코디에 맞는 롤모델 스타일 참고"""
-        celebrity_styles = {
-            "캐주얼": "공유, 수지",
-            "포멀": "이병헌, 손예진",
-            "트렌디": "송강, 제니",
-            "스포츠": "손흥민, 김연아",
-            "빈티지": "이동휘, 아이유"
-        }
-        return celebrity_styles.get(outfit_style, "추천 스타일 참고")
-    
-    def get_makeup_suggestions(self, outfit_style, mbti):
-        """코디에 맞는 화장법 제안"""
-        makeup_guide = {
-            "캐주얼": "자연스러운 베이스 + 립글로스",
-            "포멀": "완벽한 베이스 + 립스틱",
-            "트렌디": "강렬한 아이메이크업 + 컬러립",
-            "스포츠": "미니멀 메이크업",
-            "빈티지": "스모키 아이 + 누드립"
-        }
-        return makeup_guide.get(outfit_style, "자연스러운 메이크업")

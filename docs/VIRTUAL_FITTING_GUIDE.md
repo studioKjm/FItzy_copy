@@ -2,7 +2,7 @@
 
 ## 📋 개요
 
-가상 피팅 시스템은 사용자가 업로드한 이미지에 추천 코디를 실제로 합성하여 보여주는 기능입니다.
+가상 피팅 시스템은 사용자가 업로드한 이미지에 추천 코디를 실제로 합성하여 보여주는 기능입니다. Stable Diffusion Inpainting을 사용하여 자연스러운 의류 합성을 제공합니다.
 
 ---
 
@@ -56,13 +56,7 @@ source fitzy_env/bin/activate
 streamlit run app.py
 ```
 
-### 2. 사이드바 설정
-1. "🎨 AI 이미지 생성 설정" 확장
-2. "이미지 생성 방식" 선택:
-   - **"가상 피팅 (추천)"** ⭐ - Inpainting 기반 실제 합성
-   - "AI 생성 (실험적)" - Stable Diffusion 완전 생성 (부정확)
-
-### 3. 이미지 업로드
+### 2. 이미지 업로드
 **중요**: 사람이 옷을 입고 있는 이미지를 업로드해야 합니다.
 
 **권장 이미지**:
@@ -79,9 +73,10 @@ streamlit run app.py
 - ❌ 측면/뒷모습
 - ❌ 의류가 겹쳐진 경우
 
-### 4. 결과 확인
+### 3. 결과 확인
 - 추천 코디 3개 각각 아래에 가상 피팅 이미지 출력
-- 처리 시간: Inpainting 모드 약 20-30초, 색상 오버레이 모드 <1초
+- 처리 시간: Inpainting 모드 약 30-60초 (아이템당), 색상 오버레이 모드 <1초
+- "이 조합이 어울리는 이유" 섹션에서 MBTI, 계절, 날씨 등을 연계한 상세 설명 확인
 
 ---
 
@@ -118,13 +113,13 @@ SD Inpainting 실행
 
 ```python
 self.inpaint_pipe(
-    prompt="{gender} wearing {item}, realistic clothing, high quality",
+    prompt="{gender} wearing {item}, EXACTLY {color} color, realistic clothing, high quality",
     negative_prompt="face, head, portrait, person, wrong colors, blurry",
     image=original_image,      # 원본 이미지
     mask_image=mask,            # 교체할 영역 (흰색)
-    num_inference_steps=20,     # 생성 품질
+    num_inference_steps=12,     # DPM Solver 사용 (빠르고 안정적)
     guidance_scale=7.5,         # 프롬프트 준수도
-    strength=0.8                # 80% 변경, 20% 원본 유지
+    strength=0.85               # 85% 변경, 15% 원본 유지
 )
 ```
 
@@ -141,8 +136,8 @@ self.inpaint_pipe(
 - 약 70-80% 정확도 (완벽하지 않음)
 
 ### 3. 처리 속도
-- Inpainting: 아이템당 약 20-30초
-- 3개 코디 모두 생성 시 약 1-2분 소요
+- Inpainting: 아이템당 약 30-60초 (DPM Solver 스케줄러 사용)
+- 3개 코디 모두 생성 시 약 2-3분 소요
 
 ### 4. 메모리 사용
 - Inpainting 모델: 약 5GB
@@ -160,14 +155,15 @@ self.inpaint_pipe(
 | **CP-VTON** | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⚠️ | ⭐⭐⭐⭐⭐ | 매우 복잡 |
 | **HR-VITON** | ⭐⭐⭐⭐⭐ | ⭐ | ⚠️ | ⭐⭐⭐⭐⭐ | 매우 복잡 |
 | **TryOnGAN** | ⭐⭐⭐⭐ | ⭐⭐ | ❌ | ⭐⭐⭐⭐ | GPU 필요 |
-| **SD Inpainting** | ⭐⭐⭐ | ⭐⭐⭐ | ✅ | ⭐⭐ | **현재 사용** |
+| **SD Inpainting (DPM Solver)** | ⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ | ⭐⭐ | **현재 사용** |
 
 ### 결론
-- **현재 최선**: Stable Diffusion Inpainting
+- **현재 최선**: Stable Diffusion Inpainting (DPM Solver 스케줄러)
   - M2 MacBook에서 안정적으로 작동
   - 구현이 간단함
   - 무료
   - 합리적인 품질
+  - PNDM 스케줄러 오류 해결
 
 - **더 나은 품질을 위해서는**:
   - VITON/CP-VTON 등 전문 모델 필요
@@ -231,11 +227,11 @@ self.inpaint_pipe(
 
 | 항목 | SD Inpainting (현재) | 색상 오버레이 (폴백) | SD 생성 (이전) |
 |------|---------------------|-------------------|---------------|
-| **속도** | ⭐⭐⭐ (20-30초) | ⭐⭐⭐⭐⭐ (<1초) | ⭐⭐ (40-50초) |
+| **속도** | ⭐⭐⭐ (30-60초) | ⭐⭐⭐⭐⭐ (<1초) | - |
 | **색상 정확도** | ⭐⭐⭐ (70-80%) | ⭐⭐⭐⭐⭐ (100%) | ⭐⭐ (50-70%) |
 | **질감 표현** | ⭐⭐⭐⭐ (자연스러움) | ⭐ (없음) | ⭐⭐⭐ (부자연스러움) |
-| **얼굴 유지** | ⭐⭐⭐⭐⭐ (완벽) | ⭐⭐⭐⭐⭐ (완벽) | ❌ (제거됨) |
-| **메모리** | 5GB | <100MB | 5GB |
+| **얼굴 유지** | ⭐⭐⭐⭐⭐ (완벽) | ⭐⭐⭐⭐⭐ (완벽) | - |
+| **메모리** | 5GB | <100MB | - |
 
 ---
 
@@ -243,8 +239,10 @@ self.inpaint_pipe(
 
 ### 단기
 1. ✅ Inpainting 통합 (완료)
-2. ⬜ 2개 아이템 동시 처리 (현재 1개만)
-3. ⬜ 캐싱 최적화
+2. ✅ DPM Solver 스케줄러 적용 (완료)
+3. ✅ 스텝 수 최적화 (20 → 12 steps, 완료)
+4. ⬜ 2개 아이템 동시 처리 (현재 1개만)
+5. ⬜ 캐싱 최적화
 
 ### 중기
 1. ⬜ Segmentation 기반 정밀 마스킹
@@ -271,13 +269,14 @@ self.inpaint_pipe(
 - 밝은 조명의 이미지를 사용하세요
 - 단순한 배경이 이상적입니다
 
-⏱️ 처리 시간: 약 20-30초 (첫 번째 코디)
+⏱️ 처리 시간: 약 30-60초 (아이템당)
 🎨 실제 의류 질감까지 자연스럽게 합성됩니다
 ```
 
 ---
 
 **작성일**: 2025-11-03  
-**모델**: Stable Diffusion 2 Inpainting  
-**환경**: M2 MacBook, 8GB Memory
+**모델**: Stable Diffusion 2 Inpainting (DPM Solver Multistep Scheduler)  
+**환경**: M2 MacBook, 8GB Memory  
+**최적화**: 12 inference steps, guidance_scale 7.5
 
