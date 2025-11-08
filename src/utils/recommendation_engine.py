@@ -260,45 +260,125 @@ class RecommendationEngine:
         return color_text  # 변환 실패 시 원본 반환
     
     def _generate_product_recommendations(self, items, style, gender, mbti_style):
-        """아이템 기반 제품 추천"""
-        # 스타일 기반 기본 제품
-        style_products = self.recommend_products(style, gender)
-        
-        # MBTI 스타일 고려
-        mbti_keywords = mbti_style.get("description", "").lower()
-        
-        # 아이템에서 색상/타입 추출하여 더 구체적인 제품 추천
+        """아이템 기반 제품 추천 - 아이템에 정확히 맞는 제품 추천"""
         enhanced_products = []
         
-        # 상의 아이템 확인
-        top_item = next((item for item in items if "셔츠" in item or "티" in item or "상의" in item), None)
-        if top_item:
-            if "검은색" in top_item or "black" in top_item.lower():
+        # 아이템을 순서대로 확인하여 각 아이템에 맞는 제품 추천
+        for item in items:
+            item_lower = item.lower()
+            
+            # 상의 아이템 처리
+            if "셔츠" in item or "티" in item or "상의" in item:
+                # 색상 추출
+                color = None
+                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                    if c in item:
+                        color = c
+                        break
+                
+                # 타입 추출
+                item_type = "긴팔" if "긴팔" in item else "반팔" if "반팔" in item else "셔츠"
+                
                 if gender == "남성":
-                    enhanced_products.append("유니클로 U 크루넥 티셔츠 (블랙)")
+                    if color:
+                        enhanced_products.append(f"유니클로 U 크루넥 티셔츠 ({color})")
+                    else:
+                        enhanced_products.append("유니클로 U 크루넥 티셔츠")
                 else:
-                    enhanced_products.append("자라 크롭 티셔츠 (블랙)")
+                    if color:
+                        enhanced_products.append(f"자라 크롭 티셔츠 ({color})")
+                    else:
+                        enhanced_products.append("자라 크롭 티셔츠")
+            
+            # 재킷/코트 아이템 처리
+            elif "재킷" in item or "코트" in item or "가디건" in item:
+                # 색상 추출
+                color = None
+                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                    if c in item:
+                        color = c
+                        break
+                
+                if "코트" in item:
+                    if gender == "남성":
+                        if color:
+                            enhanced_products.append(f"코스 코트 ({color})")
+                        else:
+                            enhanced_products.append("코스 코트")
+                    else:
+                        if color:
+                            enhanced_products.append(f"자라 트렌치코트 ({color})")
+                        else:
+                            enhanced_products.append("자라 트렌치코트")
+                elif "재킷" in item:
+                    if gender == "남성":
+                        if color:
+                            enhanced_products.append(f"유니클로 울 블렌드 재킷 ({color})")
+                        else:
+                            enhanced_products.append("유니클로 울 블렌드 재킷")
+                    else:
+                        if color:
+                            enhanced_products.append(f"H&M 재킷 ({color})")
+                        else:
+                            enhanced_products.append("H&M 재킷")
+                elif "가디건" in item:
+                    if gender == "남성":
+                        if color:
+                            enhanced_products.append(f"유니클로 가디건 ({color})")
+                        else:
+                            enhanced_products.append("유니클로 가디건")
+                    else:
+                        if color:
+                            enhanced_products.append(f"자라 가디건 ({color})")
+                        else:
+                            enhanced_products.append("자라 가디건")
+            
+            # 하의 아이템 처리
+            elif "바지" in item or "하의" in item or "진" in item:
+                # 색상 추출
+                color = None
+                for c in ["베이지", "검은색", "흰색", "회색", "빨간색", "파란색", "네이비", "카키", "갈색"]:
+                    if c in item:
+                        color = c
+                        break
+                
+                if gender == "남성":
+                    if color:
+                        enhanced_products.append(f"리바이스 511 슬림진 ({color})")
+                    else:
+                        enhanced_products.append("리바이스 511 슬림진")
+                else:
+                    if color:
+                        enhanced_products.append(f"H&M 하이웨스트 진 ({color})")
+                    else:
+                        enhanced_products.append("H&M 하이웨스트 진")
+            
+            # 신발 아이템 처리
+            elif "부츠" in item or "스니커" in item or "신발" in item:
+                if "부츠" in item:
+                    if gender == "남성":
+                        enhanced_products.append("닥터마틴 1461")
+                    else:
+                        enhanced_products.append("찰스앤키스 앵클부츠")
+                elif "스니커" in item:
+                    if gender == "남성":
+                        enhanced_products.append("컨버스 척테일러")
+                    else:
+                        enhanced_products.append("아디다스 스탠스미스")
+                else:
+                    if gender == "남성":
+                        enhanced_products.append("컨버스 척테일러")
+                    else:
+                        enhanced_products.append("아디다스 스탠스미스")
         
-        # 하의 아이템 확인
-        bottom_item = next((item for item in items if "바지" in item or "하의" in item), None)
-        if bottom_item:
-            if gender == "남성":
-                enhanced_products.append("리바이스 511 슬림진")
-            else:
-                enhanced_products.append("H&M 하이웨스트 진")
-        
-        # 신발 아이템 확인
-        shoes_item = next((item for item in items if "신발" in item or "부츠" in item or "스니커" in item), None)
-        if shoes_item:
-            if "부츠" in shoes_item:
-                enhanced_products.append("닥터마틴 1461" if gender == "남성" else "찰스앤키스 앵클부츠")
-            else:
-                enhanced_products.append("컨버스 척테일러" if gender == "남성" else "아디다스 스탠스미스")
-        
-        # 스타일 기반 제품 추가 (중복 제거)
-        for product in style_products:
-            if product not in enhanced_products:
-                enhanced_products.append(product)
+        # 아이템 기반 제품이 3개 미만이면 스타일 기반 제품으로 보완
+        if len(enhanced_products) < 3:
+            style_products = self.recommend_products(style, gender)
+            for product in style_products:
+                if product not in enhanced_products:
+                    enhanced_products.append(product)
+                    if len(enhanced_products) >= 3:
+                        break
         
         return enhanced_products[:3]  # 최대 3개
     
@@ -548,37 +628,6 @@ class RecommendationEngine:
                 return kr
         
         return color_text
-    
-    def _generate_product_recommendations(self, items, style, gender, mbti_style):
-        """아이템 기반 제품 추천"""
-        style_products = self.recommend_products(style, gender)
-        
-        enhanced_products = []
-        
-        # 상의 아이템 확인
-        top_item = next((item for item in items if "셔츠" in item or "티" in item), None)
-        if top_item:
-            if "검은색" in top_item or "black" in top_item.lower():
-                enhanced_products.append("유니클로 U 크루넥 티셔츠 (블랙)" if gender == "남성" else "자라 크롭 티셔츠 (블랙)")
-        
-        # 하의 아이템 확인
-        bottom_item = next((item for item in items if "바지" in item), None)
-        if bottom_item:
-            enhanced_products.append("리바이스 511 슬림진" if gender == "남성" else "H&M 하이웨스트 진")
-        
-        # 신발 아이템 확인
-        shoes_item = next((item for item in items if "신발" in item or "부츠" in item or "스니커" in item), None)
-        if shoes_item:
-            if "부츠" in shoes_item:
-                enhanced_products.append("닥터마틴 1461" if gender == "남성" else "찰스앤키스 앵클부츠")
-            else:
-                enhanced_products.append("컨버스 척테일러" if gender == "남성" else "아디다스 스탠스미스")
-        
-        for product in style_products:
-            if product not in enhanced_products:
-                enhanced_products.append(product)
-        
-        return enhanced_products[:3]
     
     def get_personalized_recommendation(self, mbti, temperature, weather, season,
                                        detected_items=None, style_analysis=None):

@@ -417,7 +417,8 @@ class VirtualFittingSystem:
             if not regions:
                 print("⚠️ 의류 영역을 찾을 수 없습니다.")
                 # 영역이 없어도 원본 이미지에 텍스트로 표시
-                return self._create_text_overlay_image(original_image, outfit_items)
+                result_image = self._create_text_overlay_image(original_image, outfit_items)
+                return result_image, []  # 프롬프트 정보 없음
             
             # 2. OpenCV 형식으로 변환
             img_cv = cv2.cvtColor(np.array(original_image), cv2.COLOR_RGB2BGR)
@@ -429,10 +430,12 @@ class VirtualFittingSystem:
             
             if self.inpaint_pipe is None:
                 print("⚠️ Inpainting 모델 없음. 간단한 색상 오버레이 사용")
-                return self._simple_color_overlay(img_cv, regions, outfit_items, width, height)
+                result_image = self._simple_color_overlay(img_cv, regions, outfit_items, width, height)
+                return result_image, []  # 프롬프트 정보 없음
             
             # Inpainting으로 각 아이템 합성 (상의 + 하의 모두 처리)
             result_pil = original_image.copy()
+            prompts_info = []  # 프롬프트 정보 저장
             
             # 상의와 하의 모두 처리 (최대 2개)
             for idx, item in enumerate(outfit_items[:2]):  # 상의 + 하의
@@ -453,6 +456,13 @@ class VirtualFittingSystem:
                 
                 # 프롬프트 생성 (region_type 전달!)
                 prompt = self._build_inpaint_prompt(item, gender, region_type)
+                
+                # 프롬프트 정보 저장
+                region_name = "상의" if region_type == "top" else "하의"
+                prompts_info.append({
+                    "region": region_name,
+                    "prompt": prompt
+                })
                 
                 # 성별에 따른 negative prompt 강화
                 if gender == "남성":
@@ -499,8 +509,8 @@ class VirtualFittingSystem:
                         print(f"   - 원본 크기 사용: {original_image.size}")
                     
                     # Inpainting 실행 (DPM Solver는 더 적은 스텝으로도 좋은 결과)
-                    # 스텝 수 감소: 20 → 12 (DPM Solver는 효율적)
-                    num_steps = 12 if self.device == "mps" else 8
+                    # 스텝 수 조정: IndexError 방지를 위해 11로 설정 (DPM Solver는 내부적으로 +1을 사용)
+                    num_steps = 11 if self.device == "mps" else 7
                     
                     with torch.no_grad():
                         try:
@@ -570,8 +580,8 @@ class VirtualFittingSystem:
                                 self.inpaint_pipe.scheduler = DPMSolverMultistepScheduler.from_config(
                                     self.inpaint_pipe.scheduler.config
                                 )
-                                # 재시도
-                                num_steps = 12 if self.device == "mps" else 8
+                                # 재시도 (IndexError 방지를 위해 스텝 수 조정)
+                                num_steps = 11 if self.device == "mps" else 7
                                 if hasattr(self.inpaint_pipe.scheduler, 'set_timesteps'):
                                     self.inpaint_pipe.scheduler.set_timesteps(num_steps, device=self.device)
                                 result = self.inpaint_pipe(
@@ -621,16 +631,18 @@ class VirtualFittingSystem:
                     import traceback
                     traceback.print_exc()
                     # 폴백: 간단한 색상 오버레이
-                    return self._simple_color_overlay(img_cv, regions, outfit_items, width, height)
+                    result_image = self._simple_color_overlay(img_cv, regions, outfit_items, width, height)
+                    return result_image, []  # 프롬프트 정보 없음
             
             print("✅ 가상 피팅 완료 (Inpainting)")
-            return result_pil
+            # 프롬프트 정보와 함께 반환
+            return result_pil, prompts_info
             
         except Exception as e:
             print(f"⚠️ 가상 피팅 실패: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return None, []  # 프롬프트 정보 없음
     
     def _build_inpaint_prompt(self, item_text: str, gender: str, region_type: str = "top") -> str:
         """

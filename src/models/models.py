@@ -403,13 +403,23 @@ class TextBasedSearcher:
     def __init__(self, clip_analyzer=None):
         """CLIP 분석기를 주입받거나 새로 생성"""
         self.clip_analyzer = clip_analyzer
+        # 성별별 아이템 카테고리
         self.outfit_categories = {
-            "파티용": ["화려한 드레스", "시퀸 원피스", "스팽글 액세서리"],
-            "출근룩": ["정장", "블라우스", "슬랙스", "로퍼"],
-            "데이트룩": ["로맨틱 원피스", "부드러운 컬러", "우아한 액세서리"]
+            "파티용": {
+                "남성": ["화려한 정장", "시퀸 재킷", "스팽글 액세서리", "정장화"],
+                "여성": ["화려한 드레스", "시퀸 원피스", "스팽글 액세서리"]
+            },
+            "출근룩": {
+                "남성": ["정장 재킷", "셔츠", "슬랙스", "로퍼"],
+                "여성": ["정장 재킷", "블라우스", "슬랙스", "로퍼"]
+            },
+            "데이트룩": {
+                "남성": ["세련된 셔츠", "부드러운 컬러 재킷", "우아한 액세서리"],
+                "여성": ["로맨틱 원피스", "부드러운 컬러", "우아한 액세서리"]
+            }
         }
     
-    def search_outfits(self, query, reference_images=None):
+    def search_outfits(self, query, reference_images=None, gender=None):
         """텍스트 쿼리로 코디 검색 (CLIP 활용)"""
         # 기본 키워드 매칭
         matched_category = None
@@ -417,6 +427,16 @@ class TextBasedSearcher:
             if category in query:
                 matched_category = category
                 break
+        
+        # 성별 기본값 설정 (전달되지 않은 경우)
+        if gender is None:
+            gender = "여성"  # 기본값 (하위 호환성)
+        
+        # 성별에 맞는 아이템 가져오기
+        items = ["캐주얼 웨어"]  # 기본값
+        if matched_category and matched_category in self.outfit_categories:
+            category_items = self.outfit_categories[matched_category]
+            items = category_items.get(gender, category_items.get("여성", ["캐주얼 웨어"]))
         
         # CLIP을 사용한 이미지-텍스트 매칭 (이미지가 있는 경우)
         if reference_images and self.clip_analyzer:
@@ -440,7 +460,7 @@ class TextBasedSearcher:
                 best_matches.sort(key=lambda x: x["similarity"], reverse=True)
                 return {
                     "category": matched_category or "일반",
-                    "items": self.outfit_categories.get(matched_category, ["캐주얼 웨어"]),
+                    "items": items,
                     "matched": True,
                     "clip_results": best_matches[:3]  # 상위 3개만 반환
                 }
@@ -448,7 +468,7 @@ class TextBasedSearcher:
         # 키워드 매칭 결과 반환
         return {
             "category": matched_category or "일반",
-            "items": self.outfit_categories.get(matched_category, ["캐주얼 웨어"]),
+            "items": items,
             "matched": matched_category is not None
         }
 

@@ -366,6 +366,8 @@ def main():
             
             # 가상 피팅용 원본 이미지 저장
             user_uploaded_image = image
+            # 텍스트 검색에서 사용할 수 있도록 이미지 저장
+            st.session_state.user_uploaded_image_for_search = image
             
             # 성별 자동 인식 (얼굴 특징 기반 + DeepFace + 의상 기반 + CLIP)
             gender_changed = False
@@ -476,7 +478,9 @@ def main():
         
         if search_query:
             st.session_state.search_query = search_query
-            display_text_search_results(search_query, mbti_type)
+            # 이미지 분석 섹션에서 입력받은 이미지와 세팅값 전달
+            user_image = st.session_state.get('user_uploaded_image_for_search', None)
+            display_text_search_results(search_query, mbti_type, temperature, weather, season, gender, user_image)
     
     with tab3:
         # 트렌드 및 인기 코디
@@ -730,7 +734,11 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                     image_based_combinations, temp, gender
                 )
                 
-                products = st.session_state.recommendation_engine.recommend_products(style, gender)
+                # 아이템 기반으로 제품 추천 (아이템에 맞는 제품 추천)
+                mbti_style = recommendations.get('mbti_style', {})
+                products = st.session_state.recommendation_engine._generate_product_recommendations(
+                    displayed_items, style, gender, mbti_style
+                )
                 st.write("**추천 제품:**")
                 for p in products:
                     st.write(f"• {p}")
@@ -767,65 +775,155 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
                 cache_key = f"virtual_fitting_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
                 
                 if cache_key not in st.session_state:
-                    # 처리 중인지 확인
-                    if st.session_state.get(processing_key, False):
-                        st.info("⏳ 다른 가상 피팅이 진행 중입니다. 잠시만 기다려주세요...")
-                        continue
-                    
-                    # 처리 시작 플래그 설정
-                    st.session_state[processing_key] = True
-                    
-                    try:
-                        with st.spinner(f"🎨 {data['style']} 스타일 가상 피팅 중..."):
+                    # 추천 코디 1은 자동 생성, 2와 3은 버튼 클릭으로 생성
+                    if data["idx"] == 0:
+                        # 추천 코디 1: 자동 생성
+                        # 처리 중인지 확인
+                        if st.session_state.get(processing_key, False):
+                            st.info("⏳ 다른 가상 피팅이 진행 중입니다. 잠시만 기다려주세요...")
+                            continue
+                        
+                        # 처리 시작 플래그 설정
+                        st.session_state[processing_key] = True
+                        
+                        try:
+                            # st.spinner 대신 status_placeholder 사용 (다른 탭 블로킹 방지)
+                            status_placeholder = st.empty()
+                            image_placeholder = st.empty()
+                            
+                            status_placeholder.info(f"⏳ {data['style']} 스타일 가상 피팅 중...")
+                            
                             # 원본 이미지 사용 (user_uploaded_image 또는 image)
                             source_image = user_uploaded_image if user_uploaded_image is not None else image
-                            fitted_image = st.session_state.virtual_fitting.composite_outfit_on_image(
+                            
+                            # 가상 피팅 실행
+                            fitting_result = st.session_state.virtual_fitting.composite_outfit_on_image(
                                 source_image,
                                 data["outfit_desc"]["items"],
                                 data["outfit_desc"]["gender"]
                             )
                             
+                            # fitting_result가 튜플인 경우 (이미지, 프롬프트) 또는 이미지만 반환
+                            if isinstance(fitting_result, tuple):
+                                fitted_image, prompts_info = fitting_result
+                            else:
+                                fitted_image = fitting_result
+                                prompts_info = []
+                            
                             if fitted_image:
                                 st.session_state[cache_key] = fitted_image
-                                st.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                                # 프롬프트 정보 캐시
+                                prompts_cache_key = f"prompts_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
+                                if prompts_info:
+                                    st.session_state[prompts_cache_key] = prompts_info
+                                status_placeholder.empty()
+                                image_placeholder.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
                                 st.success("✅ 가상 피팅 완료")
+                                
+                                # 프롬프트 표시 (fold 상태)
+                                if prompts_info:
+                                    with st.expander("📝 사용된 프롬프트 보기", expanded=False):
+                                        for idx, prompt_info in enumerate(prompts_info, 1):
+                                            st.write(f"**{prompt_info['region']} 영역:**")
+                                            st.code(prompt_info['prompt'], language=None)
                             else:
-                                st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
-                    finally:
-                        # 처리 완료 플래그 해제
-                        st.session_state[processing_key] = False
+                                status_placeholder.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                        except Exception as e:
+                            st.error(f"❌ 가상 피팅 오류: {str(e)}")
+                        finally:
+                            # 처리 완료 플래그 해제
+                            st.session_state[processing_key] = False
+                    else:
+                        # 추천 코디 2, 3: 버튼 클릭으로 생성
+                        button_key = f"generate_fitting_{data['idx']}_{data['cache_key']}"
+                        is_processing = st.session_state.get(processing_key, False)
+                        
+                        if st.button(f"🎨 {data['style']} 스타일 가상 피팅 생성", key=button_key, disabled=is_processing):
+                            if is_processing:
+                                st.warning("⏳ 다른 가상 피팅이 진행 중입니다. 완료 후 다시 시도해주세요.")
+                            else:
+                                # 처리 시작 플래그 설정
+                                st.session_state[processing_key] = True
+                                
+                                try:
+                                    # st.spinner 대신 status_placeholder 사용 (다른 탭 블로킹 방지)
+                                    status_placeholder = st.empty()
+                                    image_placeholder = st.empty()
+                                    
+                                    status_placeholder.info(f"⏳ {data['style']} 스타일 가상 피팅 중...")
+                                    
+                                    # 원본 이미지 사용 (user_uploaded_image 또는 image)
+                                    source_image = user_uploaded_image if user_uploaded_image is not None else image
+                                    
+                                    # 가상 피팅 실행
+                                    fitting_result = st.session_state.virtual_fitting.composite_outfit_on_image(
+                                        source_image,
+                                        data["outfit_desc"]["items"],
+                                        data["outfit_desc"]["gender"]
+                                    )
+                                    
+                                    # fitting_result가 튜플인 경우 (이미지, 프롬프트) 또는 이미지만 반환
+                                    if isinstance(fitting_result, tuple):
+                                        fitted_image, prompts_info = fitting_result
+                                    else:
+                                        fitted_image = fitting_result
+                                        prompts_info = []
+                                    
+                                    if fitted_image:
+                                        st.session_state[cache_key] = fitted_image
+                                        # 프롬프트 정보 캐시
+                                        prompts_cache_key = f"prompts_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
+                                        if prompts_info:
+                                            st.session_state[prompts_cache_key] = prompts_info
+                                        status_placeholder.empty()
+                                        image_placeholder.image(fitted_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
+                                        st.success("✅ 가상 피팅 완료")
+                                        
+                                        # 프롬프트 표시 (fold 상태)
+                                        if prompts_info:
+                                            with st.expander("📝 사용된 프롬프트 보기", expanded=False):
+                                                for idx, prompt_info in enumerate(prompts_info, 1):
+                                                    st.write(f"**{prompt_info['region']} 영역:**")
+                                                    st.code(prompt_info['prompt'], language=None)
+                                    else:
+                                        status_placeholder.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다")
+                                except Exception as e:
+                                    st.error(f"❌ 가상 피팅 오류: {str(e)}")
+                                finally:
+                                    # 처리 완료 플래그 해제
+                                    st.session_state[processing_key] = False
+                        elif is_processing:
+                            st.info("⏳ 다른 가상 피팅이 진행 중입니다. 완료 후 버튼을 클릭하여 생성해주세요.")
                 else:
                     # 캐시된 이미지 사용
                     cached_image = st.session_state[cache_key]
                     st.image(cached_image, caption=f"{data['style']} 스타일 가상 피팅", width='stretch')
-                    st.success("✅ 가상 피팅 완료 (캐시)")
+                    st.success("✅ 가상 피팅 완료")
+                    
+                    # 프롬프트 표시 (fold 상태) - 캐시된 프롬프트가 있는 경우
+                    prompts_cache_key = f"prompts_{data['cache_key']}_{items_str}_{data['outfit_desc']['gender']}"
+                    if prompts_cache_key in st.session_state:
+                        with st.expander("📝 사용된 프롬프트 보기", expanded=False):
+                            prompts = st.session_state[prompts_cache_key]
+                            for idx, prompt_info in enumerate(prompts, 1):
+                                st.write(f"**{prompt_info['region']} 영역:**")
+                                st.code(prompt_info['prompt'], language=None)
     
-    # 추천 이유
+    # 추천 이유 및 현재 코디 평가
     st.subheader("💡 이 조합이 어울리는 이유")
     for reason in recommendations['recommendation_reason']:
         st.write(reason)
     
-    # 얼굴/체형 기반 개인화 추천
-    if face_info and body_info:
-        body_recommendations = st.session_state.body_analyzer.get_recommendation_based_on_body(
-            face_info if face_info else {},
-            body_info if body_info else {}
-        )
-        if body_recommendations:
-            st.subheader("👤 체형 맞춤 추천")
-            for rec in body_recommendations:
-                st.info(f"💡 {rec}")
-    
-    # 현재 코디 평가
-    st.subheader("🧭 현재 코디 평가")
+    # 현재 코디 평가 (추천 이유와 연계)
     eval_result = st.session_state.recommendation_engine.evaluate_current_outfit(
         result.get("detected_items", {}).get("items", []),
         result.get("style_analysis", {}),
         weather,
         season
     )
-    st.write(f"**점수:** {eval_result['score']} / 100 ({eval_result['label']})")
-    st.write("**피드백:**")
+    
+    st.markdown("---")
+    st.markdown(f"**🧭 현재 코디 평가:** {eval_result['score']} / 100 ({eval_result['label']})")
     for fb in eval_result["feedback"]:
         st.write(f"• {fb}")
     
@@ -835,27 +933,143 @@ def display_outfit_recommendations(image, mbti, temp, weather, season, gender, d
     if body_info and body_info.get("detected"):
         st.write(f"• 체형({body_info.get('body_type')})에 최적화된 실루엣 추천")
 
-def display_text_search_results(query, mbti):
-    """텍스트 검색 결과 표시"""
-    results = st.session_state.recommendation_engine.search_text_based_outfits(query)
+def display_text_search_results(query, mbti, temperature=None, weather=None, season=None, gender=None, user_image=None):
+    """텍스트 검색 결과 표시 및 가상 피팅"""
+    from config import SEASONAL_GUIDE  # MBTI_STYLES는 파일 상단에서 이미 import됨
+    
+    # FashionRecommender의 text_searcher 사용 (성별 전달)
+    results = st.session_state.fashion_recommender.text_searcher.search_outfits(query, gender=gender)
     
     st.subheader(f"'{query}' 검색 결과")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write(f"**카테고리:** {results['category']}")
-        st.write(f"**무드:** {results['mood']}")
-        st.write(f"**추천 색상:** {', '.join(results['colors'])}")
+        st.write(f"**카테고리:** {results.get('category', '일반')}")
+        # mood와 colors는 search_outfits에서 반환하지 않으므로 기본값 사용
+        mood_map = {
+            "파티용": "화려하고 눈에 띄는",
+            "출근룩": "전문적이고 세련된",
+            "데이트룩": "로맨틱하고 우아한",
+            "일반": "편안하고 캐주얼한"
+        }
+        mood = mood_map.get(results.get('category', '일반'), "편안하고 캐주얼한")
+        st.write(f"**무드:** {mood}")
+        
+        color_map = {
+            "파티용": ["빨간색", "검은색", "골드"],
+            "출근룩": ["네이비", "회색", "베이지"],
+            "데이트룩": ["핑크", "라벤더", "화이트"],
+            "일반": ["베이지", "회색", "네이비"]
+        }
+        colors = color_map.get(results.get('category', '일반'), ["베이지", "회색", "네이비"])
+        st.write(f"**추천 색상:** {', '.join(colors)}")
     
     with col2:
         st.write("**추천 아이템:**")
-        for item in results['items']:
+        items = results.get('items', ["캐주얼 웨어"])
+        for item in items:
             st.write(f"• {item}")
     
     # MBTI 개인화 적용
     if mbti in MBTI_STYLES:
         st.info(f"💡 {mbti} 유형을 위해 {MBTI_STYLES[mbti]['style']} 요소가 추가로 반영되었습니다.")
+    
+    # 가상 피팅 이미지 생성 (이미지가 있고 세팅값이 있는 경우)
+    if user_image is not None and gender and temperature is not None and weather and season:
+        st.markdown("---")
+        st.subheader("🎨 가상 피팅 이미지")
+        
+        # 텍스트 검색 결과를 기반으로 아이템 리스트 생성 (YOLO가 탐지 가능한 형식으로)
+        search_items = []
+        category = results.get('category', '일반')
+        
+        # 카테고리별 아이템 생성 (YOLO 탐지 가능한 형식: "색상 타입" 형식)
+        # 주의: "셔츠", "바지", "드레스" 등은 YOLO가 탐지 가능한 형식이어야 함
+        if category == "파티용":
+            if gender == "남성":
+                search_items = ["검은색 긴팔 상의", "검은색 바지"]
+            else:
+                search_items = ["검은색 긴팔 드레스", "검은색 바지"]  # 드레스는 전신이므로 하의는 선택적
+        elif category == "출근룩":
+            search_items = ["네이비 긴팔 상의", "회색 바지"]
+        elif category == "데이트룩":
+            if gender == "남성":
+                search_items = ["핑크 반팔 상의", "화이트 바지"]
+            else:
+                search_items = ["핑크 긴팔 드레스", "화이트 바지"]  # 드레스는 전신이므로 하의는 선택적
+        else:
+            # 일반 카테고리의 경우 MBTI와 계절 기반으로 아이템 생성
+            mbti_style = MBTI_STYLES.get(mbti, MBTI_STYLES["ENFP"])
+            seasonal_info = SEASONAL_GUIDE.get(season, SEASONAL_GUIDE["봄"])
+            
+            # 온도 기반 아이템 선택 (YOLO 탐지 가능한 형식)
+            if temperature < 15:
+                top_color = seasonal_info.get('colors', ['베이지'])[0]
+                search_items = [f"{top_color} 긴팔 상의", "회색 바지"]
+            else:
+                top_color = seasonal_info.get('colors', ['베이지'])[0]
+                search_items = [f"{top_color} 반팔 상의", "회색 바지"]
+        
+        # 이미지 분석 섹션의 가상 피팅 진행 여부 확인
+        processing_key = f"virtual_fitting_processing_{st.session_state.get('last_image_hash', 'default')}"
+        is_processing = st.session_state.get(processing_key, False)
+        
+        # 캐시 키
+        cache_key = f"text_search_fitting_{query}_{gender}_{hash(str(search_items))}"
+        prompts_cache_key = f"text_search_prompts_{query}_{gender}_{hash(str(search_items))}"
+        
+        # 가상 피팅 버튼
+        button_key = f"generate_fitting_{query}_{hash(str(search_items))}"
+        
+        # 캐시된 이미지가 있으면 표시
+        if cache_key in st.session_state:
+            cached_image = st.session_state[cache_key]
+            st.image(cached_image, caption=f"'{query}' 스타일 가상 피팅", width='stretch')
+            st.success("✅ 가상 피팅 완료")
+            
+            # 프롬프트 표시 (fold 상태)
+            if prompts_cache_key in st.session_state:
+                with st.expander("📝 사용된 프롬프트 보기", expanded=False):
+                    prompts = st.session_state[prompts_cache_key]
+                    for idx, prompt_info in enumerate(prompts, 1):
+                        st.write(f"**{prompt_info['region']} 영역:**")
+                        st.code(prompt_info['prompt'], language=None)
+        
+        # 버튼 표시 (캐시가 없거나 재생성하고 싶을 때)
+        if is_processing:
+            st.info("⏳ 이미지 분석 섹션에서 가상 피팅이 진행 중입니다. 완료 후 버튼을 클릭하여 생성해주세요.")
+        elif st.button("🎨 가상 피팅 이미지 생성", key=button_key, disabled=is_processing):
+            if is_processing:
+                st.warning("⏳ 이미지 분석 섹션에서 가상 피팅이 진행 중입니다. 완료 후 다시 시도해주세요.")
+            else:
+                # 가상 피팅 실행
+                with st.spinner(f"🎨 '{query}' 스타일 가상 피팅 중..."):
+                    try:
+                        fitting_result = st.session_state.virtual_fitting.composite_outfit_on_image(
+                            user_image,
+                            search_items,
+                            gender
+                        )
+                        
+                        # fitting_result가 튜플인 경우 (이미지, 프롬프트) 또는 이미지만 반환
+                        if isinstance(fitting_result, tuple):
+                            fitted_image, prompts_info = fitting_result
+                        else:
+                            fitted_image = fitting_result
+                            prompts_info = []
+                        
+                        if fitted_image:
+                            st.session_state[cache_key] = fitted_image
+                            if prompts_info:
+                                st.session_state[prompts_cache_key] = prompts_info
+                            st.rerun()  # 페이지 새로고침하여 캐시된 이미지 표시
+                        else:
+                            st.warning("⚠️ 가상 피팅 실패 - 의류 영역을 찾을 수 없습니다.")
+                    except Exception as e:
+                        st.error(f"❌ 가상 피팅 오류: {str(e)}")
+    elif user_image is None:
+        st.info("💡 가상 피팅을 보려면 이미지 분석 섹션에서 먼저 이미지를 업로드해주세요.")
     
 
 def display_trend_outfits(season):
